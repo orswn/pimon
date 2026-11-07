@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext, keyHint } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { defineFeature } from "../../core/feature.ts";
+import { defineFeature, type WakeMessage } from "../../core/feature.ts";
 import { clampBlock, formatDuration, LOGS_BUDGET, renderBlock, STATUS_BUDGET } from "./digest.ts";
 import { describeLiveness, verifyGroup } from "./identity.ts";
 import { deleteLease } from "./leases.ts";
@@ -53,7 +53,7 @@ export const background = defineFeature({
 	setup(ctx) {
 		const reg = ctx.reloadState("registry", 1, () => createRegistry(ctx.agentDir));
 		reg.agentDir = ctx.agentDir;
-		reg.emit = (state, text) => deliver(ctx.pi, reg, state, text);
+		reg.emit = (state, text) => deliver((message) => ctx.wake(message), reg, state, text);
 
 		ctx.promptSection({ name: "background", render: () => BACKGROUND_PROMPT });
 		ctx.pi.registerTool(createTool(reg, "background"));
@@ -102,26 +102,23 @@ function bindSession(reg: Registry, extensionCtx: ExtensionContext): void {
 	reg.notice = extensionCtx.hasUI ? (text) => extensionCtx.ui.notify(text, "info") : undefined;
 }
 
-function deliver(pi: ExtensionAPI, reg: Registry, state: JobState, text: string): void {
+function deliver(wake: (message: WakeMessage) => void, reg: Registry, state: JobState, text: string): void {
 	if (routeDigest(state.sessionId, reg.sessionId) === "notice") {
 		reg.notice?.(text.split("\n")[0] ?? text);
 		return;
 	}
-	pi.sendMessage(
-		{
-			customType: state.options.kind,
-			content: text,
-			display: true,
-			details: {
-				name: state.options.name,
-				command: state.options.command,
-				cwd: state.options.cwd,
-				logFile: state.options.logFile,
-				status: state.exitStatus,
-			},
+	wake({
+		customType: state.options.kind,
+		content: text,
+		display: true,
+		details: {
+			name: state.options.name,
+			command: state.options.command,
+			cwd: state.options.cwd,
+			logFile: state.options.logFile,
+			status: state.exitStatus,
 		},
-		{ triggerTurn: true, deliverAs: "steer" },
-	);
+	});
 }
 
 export const backgroundParameters = Type.Object({

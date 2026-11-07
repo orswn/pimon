@@ -6,6 +6,7 @@ import {
 	type AgentSession,
 	createAgentSession,
 	DefaultResourceLoader,
+	type ExtensionFactory,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -32,6 +33,8 @@ export interface HarnessOptions {
 	setupAgentDir?: (agentDir: string) => void;
 	/** Bind like an interactive or RPC host. Without bindings pi skips session_start on reload. Default true. */
 	hostBindings?: boolean;
+	/** Extensions that load after pimon. */
+	extensions?: ExtensionFactory[];
 }
 
 export async function createHarness(options: HarnessOptions): Promise<Harness> {
@@ -68,6 +71,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 					},
 				}),
 			},
+			...(options.extensions ?? []).map((factory, index) => ({ name: `test-extension-${index}`, factory })),
 		],
 	});
 	await resourceLoader.reload();

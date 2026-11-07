@@ -4,6 +4,7 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import type { ImageContent, TextContent } from "@earendil-works/pi-ai";
 import type { Static, TObject } from "typebox";
 import type { PimonEventBus } from "./events.ts";
 import type { ServiceMap } from "./services.ts";
@@ -30,6 +31,13 @@ export interface FeatureLog {
 	error(message: string, cause?: unknown): void;
 }
 
+export interface WakeMessage {
+	customType: string;
+	content: string | (TextContent | ImageContent)[];
+	display?: boolean;
+	details?: unknown;
+}
+
 export interface FeatureContext<Config> {
 	readonly id: FeatureId;
 	readonly pi: ExtensionAPI;
@@ -42,6 +50,10 @@ export interface FeatureContext<Config> {
 	/** State that survives `/reload` and session replacement in the same process. A version change discards it. */
 	reloadState<T>(key: string, version: number, create: () => T): T;
 	promptSection(section: PromptSection): void;
+	/** Sends a message that starts or steers a model run, held while a compaction or tree summary runs. */
+	wake(message: WakeMessage): void;
+	/** Changes every wake from any feature just before it is sent. Filters run in registration order. */
+	wakeFilter(filter: (message: WakeMessage) => WakeMessage): void;
 	onSessionStart(handler: SessionStartHandler): void;
 	onSessionShutdown(handler: SessionShutdownHandler): void;
 }

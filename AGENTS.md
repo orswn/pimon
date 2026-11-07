@@ -29,6 +29,7 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Use `ctx.service(id)` for another feature's service. List that feature in `dependsOn`.
 - Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that.
 - Read options only from `ctx.config`. Declare them in `configSchema`.
+- Start or steer a model run only through `ctx.wake`. Do not call `pi.sendMessage` with `triggerTurn`.
 
 ## Prompt and cache rules
 

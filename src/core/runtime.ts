@@ -18,6 +18,7 @@ import type {
 import { PromptRegistry } from "./prompt.ts";
 import { reloadSlot } from "./reload-state.ts";
 import type { ServiceMap } from "./services.ts";
+import { createWakeGate } from "./wake.ts";
 
 export type FeatureStatus = FeaturePlan | { id: FeatureId; state: "failed"; reason: string };
 
@@ -66,6 +67,13 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	const startHandlers: { feature: FeatureId; handler: SessionStartHandler }[] = [];
 	const shutdownHandlers: { feature: FeatureId; handler: SessionShutdownHandler }[] = [];
 	const statuses = new Map<FeatureId, FeatureStatus>();
+	let lastCtx: ExtensionContext | undefined;
+	const wakes = createWakeGate({
+		send: (message) =>
+			pi.sendMessage({ ...message, display: message.display ?? false }, { deliverAs: "steer", triggerTurn: true }),
+		isIdle: () => lastCtx?.isIdle() ?? false,
+		warn: (message) => report("pimon", "warning", message),
+	});
 
 	for (const feature of orderByDependencies(features, report)) {
 		const blocked = (feature.dependsOn ?? []).find((dep) => statuses.get(dep)?.state !== "enabled");
@@ -98,6 +106,8 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 			},
 			reloadState: (key, version, create) => reloadSlot(feature.id, key, version, create),
 			promptSection: (section) => prompts.add(feature.id, section),
+			wake: (message) => wakes.wake(feature.id, message),
+			wakeFilter: (filter) => wakes.addFilter(feature.id, filter, (message, cause) => log.error(message, cause)),
 			onSessionStart: (handler) => startHandlers.push({ feature: feature.id, handler }),
 			onSessionShutdown: (handler) => shutdownHandlers.push({ feature: feature.id, handler }),
 		};
@@ -137,6 +147,7 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	};
 
 	pi.on("session_start", async (event, ctx) => {
+		lastCtx = ctx;
 		if (!hostChecked) {
 			hostChecked = true;
 			// A second copy of the pi packages gives features classes and registries that pi does not see.
@@ -162,11 +173,33 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	});
 
 	pi.on("before_agent_start", (event, ctx) => {
+		lastCtx = ctx;
 		renderPrompts(ctx.cwd);
 		prompts.apply(event.systemPromptOptions);
 	});
 
+	// These handlers return nothing, so they never cancel or replace a compaction or tree summary.
+	const hold = (_event: unknown, ctx: ExtensionContext) => {
+		lastCtx = ctx;
+		wakes.hold();
+	};
+	const release = (_event: unknown, ctx: ExtensionContext) => {
+		lastCtx = ctx;
+		wakes.release();
+	};
+	pi.on("session_before_compact", hold);
+	pi.on("session_before_tree", hold);
+	pi.on("session_compact", release);
+	// An aborted compaction can come from a session replacement. Keep holding so shutdown drops the wakes.
+	pi.on("session_compact_failed", (event, ctx) => {
+		lastCtx = ctx;
+		if (!event.aborted) wakes.release();
+	});
+	pi.on("session_tree", release);
+
 	pi.on("session_shutdown", async (event, ctx) => {
+		lastCtx = undefined;
+		wakes.shutdown(event.reason);
 		for (const { feature, handler } of [...shutdownHandlers].reverse()) {
 			try {
 				await handler(event, ctx);

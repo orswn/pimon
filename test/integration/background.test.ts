@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -129,5 +129,61 @@ describe("background in a session", () => {
 		const listed = toolTexts(harness.requests.at(-1)).at(-1) ?? "";
 		expect(listed).toContain("- longjob [background]");
 		expect(listed).toContain("state: running");
+	});
+
+	it("holds an exit digest that comes during a manual compaction until the compaction ends", async () => {
+		harness = await createHarness({ features: [background] });
+		const h = harness;
+		let startSummary = () => {};
+		const summaryStarted = new Promise<void>((resolve) => {
+			startSummary = resolve;
+		});
+		let releaseSummary = () => {};
+		const summaryReleased = new Promise<void>((resolve) => {
+			releaseSummary = resolve;
+		});
+		const go = join(h.cwd, "go");
+		h.respond([
+			call("background", {
+				action: "start",
+				name: "gated",
+				command: `while [ ! -f ${go} ]; do sleep 0.05; done; echo GATED-DONE`,
+			}),
+			say("started"),
+			say("R2"),
+			async () => {
+				startSummary();
+				await summaryReleased;
+				return say("SUMMARY-MANUAL");
+			},
+			say("saw the digest"),
+			say("spare"),
+		]);
+		await h.session.prompt(`OLD-P1 ${"x".repeat(100_000)}`);
+		await h.session.prompt(`OLD-P2 ${"x".repeat(100_000)}`);
+		const log: string[] = [];
+		h.session.subscribe((event) => {
+			if (event.type === "compaction_end") log.push("compaction_end");
+			if (event.type === "agent_start") log.push("agent_start");
+		});
+
+		const compacting = h.session.compact();
+		await summaryStarted;
+		writeFileSync(go, "");
+		await new Promise((resolve) => setTimeout(resolve, 1_500));
+		const requestsWhileCompacting = h.requests.length;
+		releaseSummary();
+		await compacting;
+		await h.waitForRequests(5);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		await h.session.waitForIdle();
+		const woken = JSON.stringify(h.requests[4]);
+
+		expect(requestsWhileCompacting).toBe(4);
+		expect(log).toEqual(["compaction_end", "agent_start"]);
+		expect(h.requests).toHaveLength(5);
+		expect(woken).toContain("SUMMARY-MANUAL");
+		expect(woken).toContain('Background job \\"gated\\" ended: exit code 0');
+		expect(woken).not.toContain("OLD-P1");
 	});
 });
