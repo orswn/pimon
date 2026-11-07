@@ -4,6 +4,24 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-07
+
+### Added
+
+- `background` feature with the `background` and `monitor` tools and commands, moved from the standalone extension.
+- `<background>` prompt section.
+
+### Fixed
+
+- Monitor `edit` of the pattern now rebuilds the matcher.
+- A pi no longer reports or stops the live jobs of another pi. Leases record their owner.
+- A burst of matches arrives as one digest instead of a silent mute.
+- Digests wake only the session that started the job.
+- Quit escalates to SIGKILL before exit.
+- Monitors match the whole line up to 16 KB.
+- `stop` confirms the exit in its result.
+- The start result states the real job lifetime.
+
 ## [0.3.0] - 2026-11-07
 
 ### Added
