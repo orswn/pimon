@@ -5,7 +5,7 @@ export default defineConfig({
 		useTabs: true,
 		printWidth: 120,
 		sortPackageJson: false,
-		ignorePatterns: ["CHANGELOG.md"],
+		ignorePatterns: ["CHANGELOG.md", "**/__snapshots__/**"],
 	},
 	lint: {
 		options: {
