@@ -21,6 +21,8 @@ export interface Harness {
 	requests: Message[][];
 	extensionErrors: string[];
 	respond(steps: FauxResponseStep[]): void;
+	/** Resolves once the model has received at least `count` requests, then waits for the session to go idle. */
+	waitForRequests(count: number, timeoutMs?: number): Promise<void>;
 	dispose(): void;
 }
 
@@ -110,6 +112,15 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 							},
 				),
 			);
+		},
+		async waitForRequests(count, timeoutMs = 10_000) {
+			const deadline = Date.now() + timeoutMs;
+			while (requests.length < count) {
+				if (Date.now() > deadline)
+					throw new Error(`expected ${count} model request(s), saw ${requests.length} after ${timeoutMs}ms`);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+			}
+			await session.waitForIdle();
 		},
 		dispose() {
 			session.dispose();
