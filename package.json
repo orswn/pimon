@@ -1,6 +1,6 @@
 {
 	"name": "pimon",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"private": true,
 	"description": "One pi extension suite: background jobs, bus, agents, goals, notifications, status line, editor, and more.",
 	"type": "module",
