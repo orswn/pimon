@@ -4,6 +4,17 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-07
+
+### Added
+
+- `image-budget` feature, moved from the standalone extension.
+- Options `triggerBytes`, `targetBytes`, `keepRecentImages` in `pimon.json`.
+
+### Fixed
+
+- The "no image can be omitted" warning repeated on every turn. It now shows once and again after 4 MB more growth, with a next step.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added
