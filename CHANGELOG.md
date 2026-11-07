@@ -4,6 +4,18 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-07
+
+### Added
+
+- `harness` feature: the core operating rules as the `<harness>` prompt section.
+- Process runner with process group cancellation and failure marking.
+- File snapshot test for all rendered prompt sections.
+
+### Changed
+
+- Prompt wording: parallel calls per message, "yield" and "run" instead of "turn", AGENTS.md proposals only in defect reports.
+
 ## [0.1.0] - 2026-11-07
 
 ### Added
