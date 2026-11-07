@@ -40,8 +40,11 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 
 ## Tests
 
-- Each bug fix starts with a failing regression test that names the issue.
+- Each bug fix starts with a failing regression test that describes the behavior. Test names carry no issue ids.
 - Each test uses its own temp agent dir. No test reads or writes `~/.pi`.
+- Unit, integration, and process tests run in a sandbox (`test/support/sandbox.ts`): temp `HOME`, `XDG_RUNTIME_DIR`, `PI_CODING_AGENT_DIR`, recording stubs first in `PATH`, and no `PI_BUS_*`, `HERDR_*`, `PI_ASK_SECRET_SOCK`, `SUDO_ASKPASS`.
+- No test may reach the human: no real desktop or phone notification, terminal multiplexer, `sudo`, or live pi socket. Code that runs an external command takes an injectable exec. A new external command also goes into `STUBBED_COMMANDS`.
+- Run tests only through `npm test`, `npm run verify`, or `vp test run --project ...`. Never run the old standalone extension test files.
 
 ## Releases
 

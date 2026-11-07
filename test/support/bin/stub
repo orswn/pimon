@@ -1,0 +1,11 @@
+#!/bin/sh
+# Records the call instead of reaching the human's desktop, phone, terminal, or pi.
+name=$(basename "$0")
+if [ -n "$PIMON_TEST_STUB_LOG" ]; then printf '%s\t%s\n' "$name" "$*" >>"$PIMON_TEST_STUB_LOG"; fi
+case "$name" in
+herdr | sudo | tmux | kitty | xdg-open)
+	echo "$name is blocked in tests" >&2
+	exit 97
+	;;
+esac
+exit 0

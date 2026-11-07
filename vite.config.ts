@@ -1,5 +1,10 @@
 import { defineConfig } from "vite-plus";
 
+const sandboxed = {
+	globalSetup: ["test/support/global-sandbox.ts"],
+	setupFiles: ["test/support/worker-sandbox.ts"],
+};
+
 export default defineConfig({
 	fmt: {
 		useTabs: true,
@@ -22,9 +27,15 @@ export default defineConfig({
 	},
 	test: {
 		projects: [
-			{ extends: true, test: { name: "unit", include: ["src/**/*.test.ts"] } },
-			{ extends: true, test: { name: "integration", include: ["test/integration/**/*.test.ts"], testTimeout: 30_000 } },
-			{ extends: true, test: { name: "process", include: ["test/process/**/*.test.ts"], testTimeout: 60_000 } },
+			{ extends: true, test: { name: "unit", include: ["src/**/*.test.ts"], ...sandboxed } },
+			{
+				extends: true,
+				test: { name: "integration", include: ["test/integration/**/*.test.ts"], testTimeout: 30_000, ...sandboxed },
+			},
+			{
+				extends: true,
+				test: { name: "process", include: ["test/process/**/*.test.ts"], testTimeout: 60_000, ...sandboxed },
+			},
 			{ extends: true, test: { name: "e2e", include: ["test/e2e/**/*.test.ts"], testTimeout: 600_000 } },
 		],
 	},
