@@ -13,7 +13,7 @@ import { clampBlock, formatDuration, LOGS_BUDGET, renderBlock, STATUS_BUDGET } f
 import { describeLiveness, verifyGroup } from "./identity.ts";
 import { deleteLease } from "./leases.ts";
 import { readTail } from "./logsink.ts";
-import { buildOptions, type Kind, LIMITS, parseMonitorEdit } from "./options.ts";
+import { buildOptions, type Kind, LIMITS, newestDefaultLog, parseMonitorEdit } from "./options.ts";
 import { BACKGROUND_PROMPT, SCRIPTS_PROMPT, TIMER_PROMPT } from "./prompt.ts";
 import { foreignLogFile, foreignOwner, refreshOrphans, sweepLeases } from "./recovery.ts";
 import {
@@ -580,6 +580,8 @@ function status(reg: Registry, name: string): string {
 				"An earlier pi started this. Its stdout and stderr cannot be reattached, so there will be no exit digest.",
 			].join("\n");
 		}
+		const earlier = newestDefaultLog(name);
+		if (earlier) return `Newest log with this name from another or an earlier pi process: ${earlier}`;
 		return unknownAny(reg, name);
 	}
 
@@ -618,7 +620,8 @@ function logs(reg: Registry, name: string, rawLines: unknown, fromFile: boolean)
 	refreshOrphans(reg);
 	const state = findJob(reg, name);
 	const record = state ? undefined : reg.orphans.get(name);
-	const logFile = state ? state.sink.path : record?.lease.logFile;
+	const earlier = state || record ? undefined : newestDefaultLog(name);
+	const logFile = state ? state.sink.path : (record?.lease.logFile ?? earlier);
 	if (logFile === undefined) return unknownAny(reg, name);
 
 	const requested = clampNumber(rawLines, 50, 1, LOGS_BUDGET.maxLines);
@@ -641,6 +644,9 @@ function logs(reg: Registry, name: string, rawLines: unknown, fromFile: boolean)
 		state?.sink.note(),
 		readError ? `Log could not be read (${readError}).` : undefined,
 		record ? "Orphaned job: this is the recorded log path from an earlier pi." : undefined,
+		earlier
+			? "Not tracked by this pi process. This is the newest log with this name from another or an earlier pi process."
+			: undefined,
 		block.dropped > 0
 			? `Truncated to ${block.lines.length} of ${raw.length} line(s) to stay within ${LOGS_BUDGET.maxTotalChars} chars.`
 			: undefined,
@@ -681,7 +687,7 @@ function unknownActive(reg: Registry, name: string): string {
 
 function unknownAny(reg: Registry, name: string): string {
 	const known = [...new Set([...reg.active.keys(), ...reg.orphans.keys()])];
-	return `No job or monitor named "${name}".${known.length > 0 ? ` Known names: ${known.join(", ")}.` : " Nothing is running and no earlier job left a log."}`;
+	return `No job or monitor named "${name}".${known.length > 0 ? ` Known names: ${known.join(", ")}.` : " Nothing is running."}`;
 }
 
 // Signals an orphan only when identity verifies. Ambiguity must not authorize a kill.

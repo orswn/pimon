@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -303,9 +304,31 @@ export function parseStreams(value: string): Set<StreamName> | string {
 
 export function resolveLogFile(value: unknown, name: string, kind: Kind, cwd: string): string {
 	const raw = str(value).trim();
-	if (!raw) return path.join(os.tmpdir(), "pi-background-logs", `${kind}-${safeFileName(name)}-${Date.now()}.log`);
+	if (!raw) return path.join(defaultLogDir(), `${kind}-${safeFileName(name)}-${Date.now()}.log`);
 	// Relative paths resolve against the job cwd, not the process cwd.
 	return path.isAbsolute(raw) ? path.normalize(raw) : path.resolve(cwd, raw);
+}
+
+export function defaultLogDir(): string {
+	return path.join(os.tmpdir(), "pi-background-logs");
+}
+
+/** The newest default log of a job with this name, also from an earlier pi process. */
+export function newestDefaultLog(name: string): string | undefined {
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(defaultLogDir());
+	} catch {
+		return undefined;
+	}
+	const safe = safeFileName(name).replace(/[.]/g, "\\.");
+	const pattern = new RegExp(`^(?:background|monitor)-${safe}-(\\d+)\\.log$`);
+	let newest: { file: string; stamp: number } | undefined;
+	for (const entry of entries) {
+		const stamp = Number(pattern.exec(entry)?.[1] ?? Number.NaN);
+		if (Number.isFinite(stamp) && (!newest || stamp > newest.stamp)) newest = { file: entry, stamp };
+	}
+	return newest ? path.join(defaultLogDir(), newest.file) : undefined;
 }
 
 export function safeFileName(name: string): string {

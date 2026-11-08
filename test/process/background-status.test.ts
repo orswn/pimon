@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vite-plus/
 import { runAction } from "../../src/features/background/index.ts";
 import { captureIdentity, captureOwner } from "../../src/features/background/identity.ts";
 import { type Lease, leaseDir, writeLease } from "../../src/features/background/leases.ts";
+import { defaultLogDir } from "../../src/features/background/options.ts";
 import { sweepLeases } from "../../src/features/background/recovery.ts";
 import { createRegistry, findJob, type Registry } from "../../src/features/background/registry.ts";
 import { shutdownJobs } from "../../src/features/background/runner.ts";
@@ -145,11 +146,35 @@ describe.each(["background", "monitor"] as const)("%s status", (kind) => {
 
 	it("names the known jobs for an unknown name", async () => {
 		freshRegistry();
-		expect(await status(kind, "ghost")).toBe(
-			'No job or monitor named "ghost". Nothing is running and no earlier job left a log.',
-		);
+		expect(await status(kind, "ghost")).toBe('No job or monitor named "ghost". Nothing is running.');
 		await startJob(kind, "real", "sleep 30");
 		expect(await status(kind, "ghost")).toBe('No job or monitor named "ghost". Known names: real.');
 		expect(await status(kind, "")).toBe("status requires name");
+	});
+
+	it("names the newest log that an earlier pi process left for an unknown name", async () => {
+		freshRegistry();
+		const dir = defaultLogDir();
+		mkdirSync(dir, { recursive: true });
+		const name = `earlier-${kind}-${seq}`;
+		const older = join(dir, `${kind}-${name}-1000.log`);
+		const newer = join(dir, `${kind}-${name}-2000.log`);
+		writeFileSync(older, "OLD-LINE\n");
+		writeFileSync(newer, "NEW-1\nNEW-2\n");
+		writeFileSync(join(dir, `${kind}-${name}-x-3000.log`), "OTHER\n");
+		try {
+			expect(await status(kind, name)).toBe(
+				`Newest log with this name from another or an earlier pi process: ${newer}`,
+			);
+			expect(await runAction(reg, kind, { action: "logs", name }, root)).toEqual({
+				name,
+				logFile: newer,
+				lines: ["NEW-1", "NEW-2"],
+				source: "file",
+				note: "Not tracked by this pi process. This is the newest log with this name from another or an earlier pi process.",
+			});
+		} finally {
+			for (const file of readdirSync(dir).filter((entry) => entry.includes(name))) rmSync(join(dir, file));
+		}
 	});
 });

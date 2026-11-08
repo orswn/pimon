@@ -13,6 +13,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - A child whose first turn runs longer than 30 s no longer fails its Herdr placement and gets closed. The child sends its first task after the parent's placement returns.
 - A prompt section that needs a tool is sent only in a run where that tool is active. Before, the tools at the first render decided it for the whole session.
 - The bus state after a compaction no longer lists questions from peers that left.
+- `background` and `monitor` status and logs find the newest log with the same name from another or an earlier pi process.
 
 ## [1.0.0] - 2026-11-08
 
