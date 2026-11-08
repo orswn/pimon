@@ -8,6 +8,8 @@ import {
 	monitorParameters,
 	parseCliParams,
 	sessionStartNotice,
+	TIMER_DESCRIPTION,
+	timerParameters,
 	tokenize,
 } from "./index.ts";
 import { LIMITS } from "./options.ts";
@@ -52,6 +54,12 @@ describe("tool text", () => {
 		expect(BACKGROUND_DESCRIPTION).toContain("Pass timeoutMs=0 for a server that should run until stopped.");
 		expect(MONITOR_DESCRIPTION).toContain("match is a literal substring by default");
 	});
+
+	it("timer says what it does and how long it lives", () => {
+		expect(TIMER_DESCRIPTION).toBe(
+			'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work, and as the fallback wake while waiting on a job, monitor, or bus reply. Timers end with the pi process.',
+		);
+	});
 });
 
 describe("schemas", () => {
@@ -64,6 +72,17 @@ describe("schemas", () => {
 	it("monitor accepts edit and checks the stream enum", () => {
 		expect(Value.Check(monitorParameters, { action: "edit", stream: "both" })).toBe(true);
 		expect(Value.Check(monitorParameters, { action: "start", stream: "stdin" })).toBe(false);
+	});
+
+	it("timer bounds its fields", () => {
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 600, reason: "CI", name: "ci" })).toBe(true);
+		expect(Value.Check(timerParameters, { action: "snooze" })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 0, reason: "x" })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 604_801, reason: "x" })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 1.5, reason: "x" })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 5, reason: "" })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "set", delaySeconds: 5, reason: "x".repeat(501) })).toBe(false);
+		expect(Value.Check(timerParameters, { action: "cancel", name: "n".repeat(65) })).toBe(false);
 	});
 
 	it("numeric fields keep accepting fractions, which the options code rounds", () => {

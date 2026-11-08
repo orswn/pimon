@@ -2,7 +2,6 @@
 // the effects. Commands and tools change the record through `state.ts` directly.
 import { conditionReminderText, continuationText, rejectionHint } from "./policy.ts";
 import {
-	consumeWait,
 	countTurn,
 	type GoalRecord,
 	isActive,
@@ -12,26 +11,23 @@ import {
 	WAKE_SOURCE_LOST_DETAIL,
 } from "./state.ts";
 
-export const WAIT_TIMEOUT_MESSAGE = "goal-wait-timeout";
-export const WAIT_RESUME_MESSAGE = "goal-wait-resume";
 export const CONTINUE_MESSAGE = "goal-continue";
 export const START_MESSAGE = "goal-start";
 export const CONDITION_MESSAGE = "goal-condition";
-const EXTERNAL_WAKE_TYPES = new Set(["background", "monitor", "pi-bus"]);
-const TOKEN_WAKE_TYPES = new Set([WAIT_TIMEOUT_MESSAGE, WAIT_RESUME_MESSAGE]);
-
-export type Wake =
-	| { source: "user" }
-	| { source: "external" }
-	| { source: "timeout" | "resume"; token: string | undefined };
+export const STALL_LIMIT = 3;
+export const STALLED_DETAIL = `The agent ended ${STALL_LIMIT} runs in a row without work and without a timer.`;
 
 export interface Cycle {
 	/** The last before-settle boundary of this run asked for a continuation. */
 	continued: boolean;
 	/** A goal tool or a blocked notify ended the tool batch of this turn. */
 	terminal: boolean;
-	/** The wait token that the last wake consumed. Its own wake message is not stale. */
-	lastWakeToken?: string | undefined;
+	/** A tool was called since the last before-settle boundary. */
+	worked: boolean;
+	/** Consecutive boundaries that needed a continuation after no tool call. */
+	stalls: number;
+	/** The last before-settle boundary let the run settle on an armed timer. That timer may fire before settled. */
+	parked: boolean;
 }
 
 export interface Lifecycle {
@@ -41,16 +37,21 @@ export interface Lifecycle {
 
 export type LifecycleInput =
 	| { type: "turn-start" }
-	| { type: "wake"; wake: Wake }
+	| { type: "tool-call" }
 	| { type: "terminal" }
-	| { type: "before-settle"; outcome: "completed" | "aborted" | "error"; errorMessage?: string | undefined }
+	| {
+			type: "before-settle";
+			outcome: "completed" | "aborted" | "error";
+			errorMessage?: string | undefined;
+			timerArmed: boolean;
+	  }
 	/** `at` is later than every entry already on the branch. */
 	| { type: "start-landed"; goal: string; at: number }
-	| { type: "settled"; aborted: boolean }
+	| { type: "settled"; aborted: boolean; timerArmed: boolean }
 	| { type: "compacted" }
 	| { type: "blocked"; message: string; detail?: string | undefined }
 	| { type: "turn-end"; stopReason?: string | undefined }
-	| { type: "recover"; found: GoalRecord | undefined; kind: "restart" | "navigation"; armedHere: boolean };
+	| { type: "recover"; found: GoalRecord | undefined; kind: "restart" | "navigation"; timerArmed: boolean };
 
 export type Effect =
 	/** Store the record and append it to the session. */
@@ -59,15 +60,11 @@ export type Effect =
 	| { type: "remember"; record: GoalRecord }
 	| { type: "continue"; text: string; details: GoalMessageDetails }
 	| { type: "stopped"; reason: PauseReason; detail: string; phone: boolean }
-	| { type: "condition"; text: string; details: GoalMessageDetails }
-	| { type: "clear-timer" }
-	| { type: "arm-timer"; token: string; deadline: number };
+	| { type: "condition"; text: string; details: GoalMessageDetails };
 
 export interface GoalMessageDetails {
 	goal: string;
 	generation: number;
-	waitToken?: string;
-	wake?: "timeout" | "resume";
 }
 
 export interface Step {
@@ -76,42 +73,7 @@ export interface Step {
 }
 
 export function initialLifecycle(record?: GoalRecord): Lifecycle {
-	return { record, cycle: { continued: false, terminal: false } };
-}
-
-export function classifyWake(message: { role?: string; customType?: string; details?: unknown }): Wake | undefined {
-	if (message.role === "user") return { source: "user" };
-	if (message.role !== "custom" || typeof message.customType !== "string") return undefined;
-	if (EXTERNAL_WAKE_TYPES.has(message.customType)) return { source: "external" };
-	if (!TOKEN_WAKE_TYPES.has(message.customType)) return undefined;
-	const token = (message.details as { waitToken?: unknown } | undefined)?.waitToken;
-	return {
-		source: message.customType === WAIT_TIMEOUT_MESSAGE ? "timeout" : "resume",
-		token: typeof token === "string" ? token : undefined,
-	};
-}
-
-/** A goal wake message is stale when its token is neither the armed wait nor the wait it just consumed. */
-export function isStaleWake(
-	message: { role?: string; customType?: string; details?: unknown },
-	state: Lifecycle,
-): boolean {
-	const wake = classifyWake(message);
-	if (!wake || (wake.source !== "timeout" && wake.source !== "resume")) return false;
-	if (wake.token === undefined) return true;
-	if (wake.token === state.cycle.lastWakeToken) return false;
-	return !(isActive(state.record) && state.record.waiting?.token === wake.token);
-}
-
-/** Wait tokens to add to or remove from the set of waits armed in this process. */
-export function waitTokenChange(
-	previous: GoalRecord | undefined,
-	next: GoalRecord | undefined,
-): { add?: string | undefined; remove?: string | undefined } {
-	const before = isActive(previous) ? previous.waiting?.token : undefined;
-	const after = isActive(next) ? next.waiting?.token : undefined;
-	if (before === after) return {};
-	return { add: after, remove: before };
+	return { record, cycle: { continued: false, terminal: false, worked: false, stalls: 0, parked: false } };
 }
 
 export function goalDetails(record: GoalRecord): GoalMessageDetails {
@@ -122,8 +84,11 @@ function stop(state: Lifecycle, reason: PauseReason, detail: string, phone: bool
 	if (!isActive(state.record)) return { state, effects: [] };
 	const paused = pause(state.record, reason, detail, now);
 	return {
-		state: { ...state, record: paused },
-		effects: [{ type: "persist", record: paused }, { type: "clear-timer" }, { type: "stopped", reason, detail, phone }],
+		state: { record: paused, cycle: { ...state.cycle, stalls: 0 } },
+		effects: [
+			{ type: "persist", record: paused },
+			{ type: "stopped", reason, detail, phone },
+		],
 	};
 }
 
@@ -139,43 +104,36 @@ export function step(state: Lifecycle, input: LifecycleInput, now: number): Step
 		case "turn-start":
 			return unchanged(withCycle(state, { terminal: false }));
 
+		case "tool-call":
+			return unchanged(withCycle(state, { worked: true, stalls: 0 }));
+
 		case "terminal":
 			return unchanged(withCycle(state, { terminal: true }));
-
-		case "wake": {
-			if (!isActive(record) || !record.waiting) return unchanged(state);
-			const token = record.waiting.token;
-			if ((input.wake.source === "timeout" || input.wake.source === "resume") && input.wake.token !== token)
-				return unchanged(state);
-			const consumed = consumeWait(record, token, now);
-			if (!consumed) return unchanged(state);
-			return {
-				state: { record: consumed, cycle: { ...state.cycle, lastWakeToken: token } },
-				effects: [{ type: "persist", record: consumed }, { type: "clear-timer" }],
-			};
-		}
 
 		case "before-settle": {
 			// An abort can end with an empty error message. Only a real provider error is a run error;
 			// anything else falls through to the settled checks.
 			if (input.outcome === "error" && input.errorMessage) {
 				const stopped = stop(state, "run-error", `the model call failed: ${input.errorMessage}`, true, now);
-				return { ...stopped, state: withCycle(stopped.state, { continued: false }) };
+				return { ...stopped, state: withCycle(stopped.state, { continued: false, worked: false, parked: false }) };
 			}
-			if (input.outcome !== "completed" || !isActive(record) || record.waiting || state.cycle.terminal)
-				return unchanged(withCycle(state, { continued: false }));
+			const segmentEnded = withCycle(state, { continued: false, worked: false, parked: false });
+			if (input.outcome !== "completed" || !isActive(record) || state.cycle.terminal) return unchanged(segmentEnded);
+			if (input.timerArmed) return unchanged(withCycle(segmentEnded, { parked: true }));
+			const stalls = state.cycle.worked ? 0 : state.cycle.stalls + 1;
+			if (stalls >= STALL_LIMIT) return stop(segmentEnded, "stalled", STALLED_DETAIL, true, now);
 			const hint = record.detail && record.rejected > 0 ? rejectionHint(record.detail) : undefined;
 			return {
-				state: withCycle(state, { continued: true }),
+				state: withCycle(segmentEnded, { continued: true, stalls }),
 				effects: [{ type: "continue", text: continuationText(record, hint), details: goalDetails(record) }],
 			};
 		}
 
 		case "settled": {
 			const cycle = state.cycle;
-			const reset = withCycle(state, { continued: false, terminal: false });
+			const reset = withCycle(state, { continued: false, terminal: false, worked: false, parked: false });
 			if (input.aborted) return stop(reset, "user-input", "the run was interrupted", true, now);
-			if (!isActive(record) || record.waiting) return unchanged(reset);
+			if (!isActive(record) || cycle.parked || input.timerArmed) return unchanged(reset);
 			const detail = cycle.continued
 				? "pi did not run the requested continuation, so the goal has no run"
 				: "a run ended without a continuation, so the goal has no run";
@@ -213,9 +171,9 @@ export function step(state: Lifecycle, input: LifecycleInput, now: number): Step
 		}
 
 		case "recover": {
-			const recovered = recover(input.found, input.kind, now, { armedHere: input.armedHere });
+			const recovered = recover(input.found, input.kind, now, { timerArmed: input.timerArmed });
 			const fresh = initialLifecycle(recovered);
-			const effects: Effect[] = [{ type: "clear-timer" }];
+			const effects: Effect[] = [];
 			if (recovered && recovered !== input.found) {
 				effects.push({ type: "persist", record: recovered });
 				const detail = recovered.detail ?? WAKE_SOURCE_LOST_DETAIL;
@@ -224,8 +182,6 @@ export function step(state: Lifecycle, input: LifecycleInput, now: number): Step
 			} else if (recovered) {
 				effects.push({ type: "remember", record: recovered });
 			}
-			if (isActive(recovered) && recovered.waiting?.deadline !== undefined)
-				effects.push({ type: "arm-timer", token: recovered.waiting.token, deadline: recovered.waiting.deadline });
 			return { state: fresh, effects };
 		}
 	}

@@ -9,25 +9,19 @@ export type PauseReason =
 	| "deadline"
 	| "turn-limit"
 	| "tool-missing"
+	| "interrupted"
 	| "rejected-claims"
 	| "blocked"
 	| "unverified"
 	| "run-error"
 	| "run-lost"
-	| "interrupted"
 	| "navigation"
-	| "wake-source-lost";
+	| "wake-source-lost"
+	| "stalled";
 
 export interface GoalLimits {
 	/** 0 disables the stop. */
 	maxRejected: number;
-}
-
-export interface GoalWait {
-	token: string;
-	reason: string;
-	deadline?: number | undefined;
-	generation: number;
 }
 
 export interface GoalRecord {
@@ -47,8 +41,6 @@ export interface GoalRecord {
 	turns: number;
 	rejected: number;
 	limits: GoalLimits;
-	/** Present only while the active goal yields to an external event. */
-	waiting?: GoalWait | undefined;
 }
 
 export const MAX_CONDITION_CHARS = 4000;
@@ -111,35 +103,19 @@ export function countRejection(record: GoalRecord, reason: string, now: number):
 
 /** A new verifier invalidates any verdict in flight, so it is a real transition. */
 export function setCheck(record: GoalRecord, check: string | undefined, now: number): GoalRecord {
-	const updated = next(record, { check: check?.trim() || undefined }, now);
-	return updated.waiting ? { ...updated, waiting: { ...updated.waiting, generation: updated.generation } } : updated;
-}
-
-export function beginWait(record: GoalRecord, wait: Omit<GoalWait, "generation">, now: number): GoalRecord {
-	const updated = next(record, { waiting: undefined }, now);
-	return { ...updated, waiting: { ...wait, generation: updated.generation } };
-}
-
-/** Only the token of the armed wait can consume it. */
-export function consumeWait(record: GoalRecord, token: string, now: number): GoalRecord | undefined {
-	if (record.state !== "active" || !record.waiting || record.waiting.token !== token) return undefined;
-	return next(record, { waiting: undefined }, now);
+	return next(record, { check: check?.trim() || undefined }, now);
 }
 
 export function pause(record: GoalRecord, reason: PauseReason, detail: string, now: number): GoalRecord {
-	return next(record, { state: "paused", pauseReason: reason, detail, waiting: undefined }, now);
+	return next(record, { state: "paused", pauseReason: reason, detail }, now);
 }
 
 export function achieve(record: GoalRecord, verified: boolean, detail: string, now: number): GoalRecord {
-	return next(
-		record,
-		{ state: verified ? "achieved" : "achieved-unverified", pauseReason: undefined, detail, waiting: undefined },
-		now,
-	);
+	return next(record, { state: verified ? "achieved" : "achieved-unverified", pauseReason: undefined, detail }, now);
 }
 
 export function clear(record: GoalRecord, now: number): GoalRecord {
-	return next(record, { state: "cleared", pauseReason: undefined, waiting: undefined }, now);
+	return next(record, { state: "cleared", pauseReason: undefined }, now);
 }
 
 /** Resume restarts the budgets, so a resumed goal does not start exhausted. */
@@ -163,25 +139,23 @@ export function exceededBudget(record: GoalRecord): { reason: PauseReason; detai
 	return undefined;
 }
 
-export const WAKE_SOURCE_LOST_DETAIL = "The wait was armed in another process, so its wake source is lost.";
+export const WAKE_SOURCE_LOST_DETAIL = "No timer is armed in this pi process.";
 
 /**
- * A goal found active on load has no run behind it, so it pauses. A wait stays armed only when
- * this process armed it, because only then can its wake source still deliver.
+ * A goal found active on load stays active only while a timer of its session is armed in this
+ * process, because only that timer can wake it again. Navigation is a human action, so it pauses.
  */
 export function recover(
 	record: GoalRecord | undefined,
 	kind: "restart" | "navigation",
 	now: number,
-	options: { armedHere: boolean },
+	options: { timerArmed: boolean },
 ): GoalRecord | undefined {
 	if (!record || record.state !== "active") return record;
-	const wait = record.waiting;
-	if (wait && !options.armedHere) return pause(record, "wake-source-lost", WAKE_SOURCE_LOST_DETAIL, now);
-	if (wait && wait.generation === record.generation && wait.token && wait.reason) return record;
-	return kind === "restart"
-		? pause(record, "interrupted", "The session was reloaded or restarted while this goal was running.", now)
-		: pause(record, "navigation", "You navigated to a different branch while this goal was running.", now);
+	if (kind === "navigation")
+		return pause(record, "navigation", "You navigated to a different branch while this goal was running.", now);
+	if (options.timerArmed) return record;
+	return pause(record, "wake-source-lost", WAKE_SOURCE_LOST_DETAIL, now);
 }
 
 interface BranchEntry {
@@ -201,12 +175,19 @@ function looksLikeGoal(data: unknown): data is GoalRecord {
 	);
 }
 
+/** Older versions saved a `waiting` field. It is ignored, and the next write drops it. */
+function withoutWait(record: GoalRecord): GoalRecord {
+	if (!("waiting" in record)) return record;
+	const { waiting: _waiting, ...rest } = record as GoalRecord & { waiting?: unknown };
+	return rest;
+}
+
 /** Newest wins, and only within the given branch. */
 export function latestFromEntries(entries: readonly unknown[], customType = "goal"): GoalRecord | undefined {
 	for (let index = entries.length - 1; index >= 0; index--) {
 		const entry = entries[index] as BranchEntry | undefined;
 		if (entry?.type !== "custom" || entry.customType !== customType) continue;
-		if (looksLikeGoal(entry.data)) return entry.data;
+		if (looksLikeGoal(entry.data)) return withoutWait(entry.data);
 	}
 	return undefined;
 }
@@ -221,15 +202,11 @@ export function describe(record: GoalRecord | undefined, now: number): string {
 	const minutes = Math.round((now - record.startedAt) / 60_000);
 	const limit = record.limits.maxRejected > 0 ? `/${record.limits.maxRejected}` : " (no limit)";
 	const lines = [
-		`Goal (${record.state}${record.waiting ? ", waiting" : ""}): ${record.condition}`,
+		`Goal (${record.state}): ${record.condition}`,
 		"autonomy: full",
 		`turns: ${record.turns}   elapsed: ${minutes}m   rejected claims: ${record.rejected}${limit}`,
 	];
 	if (record.check) lines.push(`check: ${record.check}`);
-	if (record.waiting) {
-		const until = record.waiting.deadline ? ` (until ${new Date(record.waiting.deadline).toISOString()})` : "";
-		lines.push(`waiting: ${record.waiting.reason}${until}`);
-	}
 	if (record.pauseReason) lines.push(`paused: ${record.pauseReason}${record.detail ? ` (${record.detail})` : ""}`);
 	else if (record.detail) lines.push(`last verdict: ${record.detail}`);
 	return lines.join("\n");

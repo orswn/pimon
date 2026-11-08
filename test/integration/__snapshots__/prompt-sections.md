@@ -63,6 +63,7 @@ This applies to pi and its extensions.
 - A `background` job wakes on exit. Inspect its bounded digest first. Use its `logs` or `status` action when more evidence is needed. Never rerun the command merely to recover output.
 - A `monitor` owns the command it watches. Arm it with the specific line that changes what should happen next. Broad matches are not progress tracking.
 - Background and monitor notifications report process facts. Reconcile them with the current objective before acting.
+- Use `timer` to come back later.
 </background>
 
 <notify>
@@ -77,9 +78,9 @@ This applies to pi and its extensions.
 
 - An autonomous goal exists only when the goal feature starts one and posts its completion condition.
 - The active goal condition authorizes unattended work until achieved, paused, cleared, blocked, or replaced by the human.
-- Outside an active goal, do not call `goal_wait` or `goal_done`. Ordinary run boundaries apply. Do not continue merely because a tool or extension can wake another run.
-- Call `goal_wait` only after you arm `background`, `monitor`, or `pi_bus` work that is the next real dependency of the goal. Do not use it for a human decision, a generic delay, or work that has not started.
-- Call `goal_wait` as the only tool call in its message. Its timeout is a fallback for a failed notification, not a polling interval.
+- Outside an active goal, do not call `goal_done`. Ordinary run boundaries apply. Do not continue merely because a tool or extension can wake another run.
+- During an active goal, a run ends only while a `timer` is armed. To wait for external work, arm it first, then set a timer for when it should be done.
+- When a timer fires, inspect the work it was set for. Do not use timers as a polling interval.
 - Call `goal_done` as the only tool call in its message. Provide concrete evidence that the completion condition holds.
 - Do not use `goal_done` to ask whether work is complete. The independent check may reject an unsupported claim.
 </goal>

@@ -1,9 +1,7 @@
 import { describe as group, expect, it } from "vite-plus/test";
 import {
 	achieve,
-	beginWait,
 	clear,
-	consumeWait,
 	countTurn,
 	createGoal,
 	describe,
@@ -70,42 +68,6 @@ group("state transitions", () => {
 		expect(resume(achieve(fresh, true, "ok", T0), T0).error).toBeTruthy();
 	});
 
-	it("arms a wait that keeps the goal active, with its generation and deadline", () => {
-		const waiting = beginWait(fresh, { token: "wait-1", reason: "background test", deadline: T0 + 10_000 }, T0 + 4000);
-		expect(waiting.state).toBe("active");
-		expect(waiting.waiting?.reason).toBe("background test");
-		expect(waiting.waiting?.generation).toBe(waiting.generation);
-		expect(waiting.waiting?.deadline).toBe(T0 + 10_000);
-	});
-
-	it("rebinds the wait generation on a check change and keeps the token", () => {
-		const waiting = beginWait(fresh, { token: "wait-1", reason: "r" }, T0 + 4000);
-		const rebound = setCheck(waiting, "true", T0 + 4500);
-		expect(rebound.waiting?.generation).toBe(rebound.generation);
-		expect(rebound.waiting?.token).toBe("wait-1");
-	});
-
-	it("consumes a wait only with its token and bumps the generation", () => {
-		const waiting = setCheck(beginWait(fresh, { token: "wait-1", reason: "r" }, T0 + 4000), "true", T0 + 4500);
-		expect(consumeWait(waiting, "old", T0 + 5000)).toBeUndefined();
-		const consumed = consumeWait(waiting, "wait-1", T0 + 5000);
-		expect(consumed?.state).toBe("active");
-		expect(consumed?.waiting).toBeUndefined();
-		expect(consumed?.generation).toBe(waiting.generation + 1);
-	});
-
-	it("does not consume the wait of a paused goal", () => {
-		const waiting = beginWait(fresh, { token: "wait-1", reason: "r" }, T0);
-		expect(consumeWait({ ...waiting, state: "paused" }, "wait-1", T0)).toBeUndefined();
-	});
-
-	it("removes the wait marker on pause, achieve, and clear", () => {
-		const waiting = beginWait(fresh, { token: "wait-1", reason: "r" }, T0 + 4000);
-		expect(pause(waiting, "user-input", "stop", T0 + 6000).waiting).toBeUndefined();
-		expect(achieve(waiting, true, "done", T0 + 6000).waiting).toBeUndefined();
-		expect(clear(waiting, T0 + 6000).waiting).toBeUndefined();
-	});
-
 	it("has terminal achieved, achieved-unverified, and cleared states", () => {
 		const done = achieve(fresh, true, "verified", T0 + 5000);
 		expect(isTerminal(done)).toBe(true);
@@ -138,38 +100,26 @@ group("budgets", () => {
 
 group("recovery", () => {
 	const active = goal();
-	const waiting = beginWait(
-		active,
-		{ token: "restart-wait", reason: "external result", deadline: T0 + 60_000 },
-		T0 + 1,
-	);
-	it("pauses an active goal as interrupted on restart and as navigation on a branch switch", () => {
-		expect(recover(active, "restart", T0, { armedHere: true })?.pauseReason).toBe("interrupted");
-		expect(recover(active, "navigation", T0, { armedHere: true })?.pauseReason).toBe("navigation");
-		expect(recover(active, "restart", T0, { armedHere: true })?.state).toBe("paused");
+	it("keeps an active goal on restart while a timer of its session is armed in this process", () => {
+		expect(recover(active, "restart", T0, { timerArmed: true })).toBe(active);
+	});
+	it("pauses an active goal without a timer on restart as wake-source-lost and says why", () => {
+		const lost = recover(active, "restart", T0 + 2, { timerArmed: false });
+		expect(lost).toMatchObject({
+			state: "paused",
+			pauseReason: "wake-source-lost",
+			detail: "No timer is armed in this pi process.",
+		});
+	});
+	it("pauses an active goal on a branch switch as navigation, also with a timer", () => {
+		expect(recover(active, "navigation", T0, { timerArmed: true })?.pauseReason).toBe("navigation");
+		expect(recover(active, "navigation", T0, { timerArmed: false })?.pauseReason).toBe("navigation");
 	});
 	it("leaves paused and achieved goals and no goal alone", () => {
 		const paused = pause(active, "deadline", "out of time", T0);
-		expect(recover(paused, "restart", T0, { armedHere: false })).toBe(paused);
-		expect(recover(achieve(active, true, "", T0), "restart", T0, { armedHere: false })?.state).toBe("achieved");
-		expect(recover(undefined, "restart", T0, { armedHere: false })).toBeUndefined();
-	});
-	it("keeps a wait armed in this process across reload and branch reconstruction", () => {
-		expect(recover(waiting, "restart", T0 + 2, { armedHere: true })).toBe(waiting);
-		expect(recover(waiting, "navigation", T0 + 2, { armedHere: true })).toBe(waiting);
-	});
-	it("pauses a wait with a mismatched generation", () => {
-		const stale = { ...waiting, waiting: { token: "restart-wait", reason: "x", generation: waiting.generation - 1 } };
-		expect(recover(stale, "restart", T0 + 2, { armedHere: true })).toMatchObject({
-			state: "paused",
-			pauseReason: "interrupted",
-		});
-	});
-	it("pauses a wait armed elsewhere as wake-source-lost and says why", () => {
-		const lost = recover(waiting, "restart", T0 + 2, { armedHere: false });
-		expect(lost?.state).toBe("paused");
-		expect(lost?.pauseReason).toBe("wake-source-lost");
-		expect(lost?.detail).toContain("wake source");
+		expect(recover(paused, "restart", T0, { timerArmed: false })).toBe(paused);
+		expect(recover(achieve(active, true, "", T0), "restart", T0, { timerArmed: false })?.state).toBe("achieved");
+		expect(recover(undefined, "restart", T0, { timerArmed: false })).toBeUndefined();
 	});
 });
 
@@ -186,6 +136,13 @@ group("reconstruction from session entries", () => {
 		];
 		expect(latestFromEntries(entries)?.id).toBe("new");
 		expect(latestFromEntries([{ type: "custom", customType: "background", data: { id: "no" } }])).toBeUndefined();
+	});
+	it("loads a record saved with a waiting field and drops the field", () => {
+		const old = { ...goal(), waiting: { token: "w", reason: "CI result", generation: 1 } };
+		const loaded = latestFromEntries([{ type: "custom", customType: "goal", data: old }]);
+		expect(loaded).toEqual(goal());
+		expect(loaded && "waiting" in loaded).toBe(false);
+		expect(describe(loaded, T0)).toContain("Goal (active): all tests pass");
 	});
 	it("ignores malformed data, an empty branch, and custom_message entries", () => {
 		expect(latestFromEntries([{ type: "custom", customType: "goal", data: { nope: true } }])).toBeUndefined();
@@ -207,14 +164,6 @@ group("status rendering", () => {
 		const text = describe(pause(goal(), "blocked", "needs a decision", T0), T0);
 		expect(text).toContain("blocked");
 		expect(text).toContain("needs a decision");
-	});
-	it("identifies an external wait", () => {
-		const text = describe(
-			beginWait(goal(), { token: "status-wait", reason: "CI result", deadline: T0 + 60_000 }, T0),
-			T0,
-		);
-		expect(text).toContain("Goal (active, waiting)");
-		expect(text).toContain("CI result");
 	});
 	it("reports achieved and unverified achievement", () => {
 		expect(describe(achieve(goal(), true, "", T0), T0).startsWith("Goal achieved:")).toBe(true);

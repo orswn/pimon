@@ -30,6 +30,46 @@ import {
 	runtimeMs,
 } from "./registry.ts";
 import { describeStop, dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
+import {
+	armedTimers,
+	cancelTimer,
+	cancelTimers,
+	clearAllTimers,
+	createTimerStore,
+	fireTimersNow,
+	flushTimers,
+	listTimers,
+	pendingTimers,
+	setTimer,
+	TIMER_LIMITS,
+	type TimerFilter,
+	type TimerInfo,
+	type TimerResult,
+	type TimerStore,
+	type TimerWake,
+} from "./timers.ts";
+
+export interface BackgroundService {
+	timers: {
+		armed(sessionId: string): readonly TimerInfo[];
+		/** Fired timers that wait for the next runtime bind. They still wake their session. */
+		pending(sessionId: string): readonly TimerInfo[];
+		cancel(filter: TimerFilter): number;
+		fireNow(filter: TimerFilter): number;
+	};
+}
+
+declare module "../../core/services.ts" {
+	interface ServiceMap {
+		background: BackgroundService;
+	}
+}
+
+declare module "../../core/events.ts" {
+	interface PimonEvents {
+		"timers:changed": { sessionId: string };
+	}
+}
 
 interface LogsResult {
 	name: string;
@@ -50,19 +90,29 @@ export const background = defineFeature({
 	id: "background",
 	description: "Background jobs that wake the agent on exit, and output monitors that wake it on a matching line",
 	defaultEnabled: true,
-	setup(ctx) {
+	setup(ctx): BackgroundService {
 		const reg = ctx.reloadState("registry", 1, () => createRegistry(ctx.agentDir));
 		reg.agentDir = ctx.agentDir;
 		reg.emit = (state, text) => deliver((message) => ctx.wake(message), reg, state, text);
+		const timers = ctx.reloadState("timers", 1, createTimerStore);
+		const wakeTimer = (message: TimerWake) => ctx.wake(message);
+		const timersChanged = (sessionId: string) => ctx.events.emit("timers:changed", { sessionId });
+		timers.wake = wakeTimer;
+		timers.changed = timersChanged;
 
 		ctx.promptSection({ name: "background", render: () => BACKGROUND_PROMPT });
 		ctx.pi.registerTool(createTool(reg, "background"));
 		ctx.pi.registerTool(createTool(reg, "monitor"));
+		ctx.pi.registerTool(createTimerTool(timers));
 		registerCommand(ctx.pi, reg, "background");
 		registerCommand(ctx.pi, reg, "monitor");
+		registerTimersCommand(ctx.pi, timers);
 
 		ctx.onSessionStart((event, extensionCtx) => {
 			bindSession(reg, extensionCtx);
+			bindTimers(timers, extensionCtx);
+			timers.wake = wakeTimer;
+			timers.changed = timersChanged;
 			// Without a UI, this report and digests from another session are dropped: such a session has no
 			// place to show them, and `background list` shows orphans.
 			const notify = (text: string, level: "info" | "warning") => {
@@ -81,14 +131,118 @@ export const background = defineFeature({
 			if (report) notify(report, "warning");
 		});
 
+		// After every session_start handler, so goal recovery still sees the timers that fired while unbound.
+		ctx.events.on("pimon:session-ready", () => flushTimers(timers));
+
 		ctx.onSessionShutdown(async (event) => {
+			if (event.reason === "quit") clearAllTimers(timers);
+			if (timers.wake === wakeTimer) {
+				timers.wake = undefined;
+				timers.notice = undefined;
+				timers.changed = undefined;
+				// A reload keeps the session. Without host bindings pi skips session_start after it.
+				if (event.reason !== "reload") timers.sessionId = undefined;
+			}
 			// Reload and session replacement keep jobs on purpose: killing a test suite
 			// because the user typed /reload is a worse failure than an orphan.
 			if (event.reason !== "quit") return;
 			await shutdownJobs(reg);
 		});
+
+		return {
+			timers: {
+				armed: (sessionId) => armedTimers(timers, sessionId),
+				pending: (sessionId) => pendingTimers(timers, sessionId),
+				cancel: (filter) => cancelTimers(timers, filter),
+				fireNow: (filter) => fireTimersNow(timers, filter),
+			},
+		};
 	},
 });
+
+function bindTimers(timers: TimerStore, extensionCtx: ExtensionContext): void {
+	timers.sessionId = extensionCtx.sessionManager.getSessionId();
+	timers.notice = extensionCtx.hasUI ? (text) => extensionCtx.ui.notify(text, "info") : undefined;
+}
+
+export const TIMER_DESCRIPTION =
+	'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work, and as the fallback wake while waiting on a job, monitor, or bus reply. Timers end with the pi process.';
+
+export const timerParameters = Type.Object({
+	action: StringEnum(["set", "list", "cancel"] as const, { description: "set, list, or cancel" }),
+	name: Type.Optional(
+		Type.String({
+			minLength: 1,
+			maxLength: TIMER_LIMITS.maxNameChars,
+			description: "Timer name (default timer-<n>). set with an existing name replaces that timer",
+		}),
+	),
+	delaySeconds: Type.Optional(
+		Type.Integer({ minimum: 1, maximum: TIMER_LIMITS.maxDelaySeconds, description: "Seconds until it fires (set)" }),
+	),
+	reason: Type.Optional(
+		Type.String({
+			minLength: 1,
+			maxLength: TIMER_LIMITS.maxReasonChars,
+			description: "What to check when it fires (set)",
+		}),
+	),
+});
+
+export function runTimerAction(
+	timers: TimerStore,
+	sessionId: string,
+	params: Record<string, unknown>,
+	now = Date.now(),
+): TimerResult {
+	const action = str(params["action"]);
+	switch (action) {
+		case "set":
+			return setTimer(timers, sessionId, params, now);
+		case "list":
+			return listTimers(timers, sessionId, now);
+		case "cancel":
+			return cancelTimer(timers, sessionId, params["name"]);
+		default:
+			return { ok: false, text: `Unsupported timer action: ${action || "<missing>"}. Use set, list, or cancel.` };
+	}
+}
+
+function createTimerTool(timers: TimerStore) {
+	return defineTool({
+		name: "timer",
+		label: "Timer",
+		description: TIMER_DESCRIPTION,
+		promptSnippet: "Wake this session later with a reason",
+		exposure: "direct",
+		parameters: timerParameters,
+		async execute(_toolCallId, params, _signal, _onUpdate, extensionCtx) {
+			const raw = params as Record<string, unknown>;
+			const result = runTimerAction(timers, extensionCtx.sessionManager.getSessionId(), raw);
+			if (!result.ok) throw new Error(result.text);
+			return { content: [{ type: "text", text: result.text }], details: { action: raw["action"] } };
+		},
+	});
+}
+
+function registerTimersCommand(pi: ExtensionAPI, timers: TimerStore): void {
+	pi.registerCommand("timers", {
+		description: "List the timers of this session, or cancel one with /timers cancel <name>",
+		handler: async (args, extensionCtx) => {
+			const [subcommand, rest] = splitFirst(args.trim());
+			const params =
+				subcommand === "" || subcommand === "list"
+					? { action: "list" }
+					: subcommand === "cancel"
+						? { action: "cancel", name: rest }
+						: undefined;
+			const result = params
+				? runTimerAction(timers, extensionCtx.sessionManager.getSessionId(), params)
+				: { ok: false, text: `Unknown timers command: ${subcommand}. Use /timers or /timers cancel <name>.` };
+			if (extensionCtx.hasUI) extensionCtx.ui.notify(result.text, result.ok ? "info" : "error");
+		},
+	});
+}
 
 export function sessionStartNotice(reg: Registry, reason: string): string | undefined {
 	const active = activeJobs(reg);

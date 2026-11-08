@@ -1,7 +1,7 @@
 // Goal-specific text for the model. General goal rules live in the `goal` prompt section.
 import type { GoalRecord } from "./state.ts";
 
-/** Byte-stable across turns, waits, and wakes. Limits are absolutes, never a remaining count. */
+/** Byte-stable across turns and wakes. Limits are absolutes, never a remaining count. */
 export function goalContextText(record: GoalRecord): string {
 	const lines = ["<active-goal>", "completion condition:", record.condition];
 	if (record.check) lines.push(`verification command (run by the harness, not by you): ${record.check}`);
@@ -30,23 +30,15 @@ export function conditionReminderText(record: GoalRecord): string {
 export function continuationText(record: GoalRecord, hint?: string): string {
 	const lines = [`Goal continuation ${record.turns + 1}.`];
 	if (hint) lines.push(hint);
-	lines.push("Keep working toward the active goal. Call goal_done when the condition is provably met.");
+	lines.push(
+		"Keep working toward the active goal. Call goal_done when the condition is provably met.",
+		"To wait for external work, arm it, then set a timer for when it should be done. A run ends only while a timer is armed.",
+	);
 	return lines.join("\n");
 }
 
 export function rejectionHint(reason: string): string {
 	return `Your last goal_done claim was rejected: ${reason}`;
-}
-
-export function waitTimeoutText(reason: string): string {
-	return `The external wait timed out: ${reason}. Inspect the current external work and either continue or arm another wait.`;
-}
-
-export const WAIT_RESUME_TEXT =
-	"The user manually resumed this external wait. Continue the active goal and inspect the external work before deciding whether to wait again.";
-
-export function staleWaitText(): string {
-	return "This external-wait notice is stale. Ignore it and follow the current active goal state; do not treat it as a timeout or change the goal.";
 }
 
 export function stalePauseText(): string {

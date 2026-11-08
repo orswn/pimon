@@ -95,6 +95,7 @@ export function createWakeGate(options: WakeGateOptions): WakeGate {
 			stopFallback();
 			const counts = new Map<FeatureId, number>();
 			for (const { feature } of held) counts.set(feature, (counts.get(feature) ?? 0) + 1);
+			// Accepted loss: a held wake, such as a fired timer, is gone after this. Only the warning remains.
 			held = [];
 			if (counts.size === 0) return;
 			const list = [...counts].map(([feature, count]) => `${feature} ${count}`).join(", ");

@@ -4,6 +4,18 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- `timer` tool and `/timers` command in the `background` feature. A timer wakes its session later with a reason. Timers end with the pi process.
+
+### Changed
+
+- An active goal ends a run only while a timer is armed. Without a timer the goal continues. Three runs in a row without a tool call and without a timer pause the goal as `stalled`.
+
+### Removed
+
+- The `goal_wait` tool. Set a `timer` instead.
+
 ## [0.6.0] - 2026-11-08
 
 ### Added

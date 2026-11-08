@@ -4,38 +4,32 @@ import type { CustomMessageEntryDraft, ExtensionContext } from "@earendil-works/
 import { Type } from "typebox";
 import { createProcessRunner, type ExecFn } from "../../core/exec.ts";
 import { defineFeature, type WakeMessage } from "../../core/feature.ts";
+import { clockTime } from "../background/timers.ts";
 import { checkOnlyCall, formatOutcome, type NotifyRequest } from "../notify/index.ts";
 import { adjudicateWithCheck, adjudicateWithModel, type ModelResponse, type Usage } from "./adjudicate.ts";
 import { buildEvidence } from "./evidence.ts";
 import {
 	CONDITION_MESSAGE,
-	classifyWake,
+	CONTINUE_MESSAGE,
 	type Effect,
 	goalDetails,
 	initialLifecycle,
-	isStaleWake,
 	type Lifecycle,
 	type LifecycleInput,
 	START_MESSAGE,
 	step,
-	WAIT_RESUME_MESSAGE,
-	WAIT_TIMEOUT_MESSAGE,
-	waitTokenChange,
-	CONTINUE_MESSAGE,
 } from "./lifecycle.ts";
 import {
 	CHECK_CHANGED_TEXT,
 	conditionChangedText,
+	continuationText,
+	rejectionHint,
 	stalePauseText,
-	staleWaitText,
 	startText,
-	WAIT_RESUME_TEXT,
-	waitTimeoutText,
 } from "./policy.ts";
 import { GOAL_PROMPT } from "./prompt.ts";
 import {
 	achieve,
-	beginWait,
 	clear,
 	countRejection,
 	createGoal,
@@ -54,23 +48,21 @@ import { expandGoalTemplate, goalTemplateCompletions } from "./template.ts";
 
 const ENTRY_TYPE = "goal";
 const CLAIM_TOOL = "goal_done";
-const WAIT_TOOL = "goal_wait";
 const NO_GOAL = "No goal is active.";
+export const NO_TIMER_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
 const SESSION_ENDED_TEXT =
 	"The session was reloaded or ended while this claim was adjudicated. The verdict was discarded.";
-const WAIT_TIMER_MAX_MS = 2_147_000_000;
-const MAX_WAIT_TIMEOUT_MS = 30 * 24 * 60 * 60_000;
 const ADJUDICATION_TIMEOUT_MS = 120_000;
 const CHECK_TIMEOUT_MS = 15 * 60_000;
 
-export const WAIT_DESCRIPTION =
-	"Yield an active autonomous goal until background, monitor, or pi-bus work wakes it. Arm the external source first. Must be the only tool call in its message. Optional timeoutMs is a fallback for failed notifications, not a reason to poll.";
 export const CLAIM_DESCRIPTION =
 	"Claim that the active goal's completion condition is met. An independent check runs before the claim is accepted. Must be the only tool call in its message.";
 
 export interface GoalStatePayload {
 	state?: GoalRecord["state"];
 	turns?: number;
+	/** Epoch ms of the earliest armed timer of this session. */
+	timerDueAt?: number;
 }
 
 export interface GoalFeatureOptions {
@@ -121,18 +113,18 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 	return defineFeature({
 		id: "goal",
 		description: "Autonomous goals: unattended work toward a condition, finished by an independent check",
-		dependsOn: ["notify"],
+		dependsOn: ["notify", "background"],
 		defaultEnabled: true,
 		setup(ctx) {
 			const pi = ctx.pi;
 			const runner = createProcessRunner();
 			const exec = options.exec ?? runner.run;
 			const notifier = ctx.service("notify");
-			const waits = ctx.reloadState("waits", 1, () => new Set<string>());
+			const timers = ctx.service("background").timers;
 
 			let life: Lifecycle = initialLifecycle();
 			let ui: ExtensionContext | undefined;
-			let timer: ReturnType<typeof setTimeout> | undefined;
+			let sessionId: string | undefined;
 			// Cancels the adjudication of the current goal: check command and model call.
 			let cancel: AbortController | undefined;
 			// A later command wins over an earlier one that is still awaiting.
@@ -147,17 +139,60 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				}
 			};
 
+			const see = (extensionCtx: ExtensionContext) => {
+				ui = extensionCtx;
+				sessionId = extensionCtx.sessionManager.getSessionId();
+			};
+
+			/** Armed timers and fired timers that wait for the next runtime bind. Both still wake this session. */
+			const timerArmed = () =>
+				sessionId !== undefined && (timers.armed(sessionId).length > 0 || timers.pending(sessionId).length > 0);
+			// Set while the goal cancels its own timers, so that cancel raises no warning.
+			let releasing = false;
+
 			// TODO(okka): remove when the statusline moves into pimon.
 			const publish = () => {
 				const record = life.record;
 				const payload: GoalStatePayload = record ? { state: record.state, turns: record.turns } : {};
+				const due = sessionId === undefined ? [] : timers.armed(sessionId).map((timer) => timer.dueAt);
+				if (record && due.length > 0) payload.timerDueAt = Math.min(...due);
 				pi.events.emit("goal:state", payload);
 			};
 
-			const syncWaits = (previous: GoalRecord | undefined, next: GoalRecord | undefined) => {
-				const change = waitTokenChange(previous, next);
-				if (change.remove) waits.delete(change.remove);
-				if (change.add) waits.add(change.add);
+			/** A goal that ends, pauses, or is replaced takes the timers set since it started with it. */
+			const releaseTimers = (previous: GoalRecord | undefined, next: GoalRecord | undefined) => {
+				if (!isActive(previous) || sessionId === undefined) return;
+				if (isActive(next) && next.id === previous.id) return;
+				releasing = true;
+				try {
+					timers.cancel({ sessionId, createdSince: previous.startedAt });
+				} finally {
+					releasing = false;
+				}
+			};
+
+			const isIdle = () => {
+				try {
+					return ui?.isIdle() ?? false;
+				} catch {
+					// A context from a replaced session cannot answer.
+					return false;
+				}
+			};
+
+			ctx.events.on("timers:changed", (payload) => {
+				if (!live || payload.sessionId !== sessionId) return;
+				publish();
+				if (releasing || !isActive(life.record) || timerArmed() || !isIdle()) return;
+				notice(NO_TIMER_WARNING, "warning");
+			});
+
+			const goalTimerLines = (record: GoalRecord | undefined): string[] => {
+				if (!isActive(record) || sessionId === undefined) return [];
+				return timers
+					.armed(sessionId)
+					.filter((timer) => timer.createdAt >= record.startedAt)
+					.map((timer) => `timer ${timer.name}: fires at ${clockTime(timer.dueAt)}. Reason: ${timer.reason}`);
 			};
 
 			const append = (record: GoalRecord): boolean => {
@@ -175,7 +210,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				if (!append(next)) return false;
 				const previous = life.record;
 				life = { ...life, record: next };
-				syncWaits(previous, next);
+				releaseTimers(previous, next);
 				publish();
 				return true;
 			};
@@ -185,33 +220,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			let sessionEpoch = 0;
 			// The run that was active at a reload still sends events to this instance. Its context is stale.
 			let live = true;
-
-			const clearTimer = () => {
-				if (timer) clearTimeout(timer);
-				timer = undefined;
-			};
-
-			const armTimer = (token: string, deadline: number) => {
-				clearTimer();
-				const fire = () => {
-					timer = undefined;
-					const record = life.record;
-					if (!isActive(record) || record.waiting?.token !== token) return;
-					const remaining = deadline - Date.now();
-					if (remaining > 0) {
-						timer = setTimeout(fire, Math.min(remaining, WAIT_TIMER_MAX_MS));
-						timer.unref?.();
-						return;
-					}
-					wake({
-						customType: WAIT_TIMEOUT_MESSAGE,
-						content: waitTimeoutText(record.waiting.reason),
-						display: true,
-						details: { ...goalDetails(record), waitToken: token, wake: "timeout" },
-					});
-				};
-				fire();
-			};
 
 			const report = (request: NotifyRequest) => {
 				void notifier.notify(request).then(
@@ -225,19 +233,17 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			const announceStop = (reason: PauseReason, detail: string, phone: boolean) => {
 				cancel?.abort();
 				cancel = undefined;
-				clearTimer();
 				notice(`Goal paused: ${reason}. ${detail}`, "warning");
 				if (phone) report({ kind: "paused", title: "pi goal: paused", message: `Goal paused: ${reason}`, detail });
 			};
 
 			/** Runs one reducer step and its effects. Returns the drafts for a before-settle boundary. */
 			const run = (input: LifecycleInput, extensionCtx?: ExtensionContext): CustomMessageEntryDraft[] => {
-				if (extensionCtx) ui = extensionCtx;
+				if (extensionCtx) see(extensionCtx);
 				const previous = life.record;
 				const result = step(life, input, Date.now());
 				life = result.state;
-				// A session switch must keep the waits that other sessions armed in this process.
-				if (input.type !== "recover") syncWaits(previous, life.record);
+				releaseTimers(previous, life.record);
 				const drafts: CustomMessageEntryDraft[] = [];
 				for (const effect of result.effects) apply(effect, drafts);
 				if (life.record !== previous) publish();
@@ -270,21 +276,15 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 							{ triggerTurn: false },
 						);
 						return;
-					case "clear-timer":
-						clearTimer();
-						return;
-					case "arm-timer":
-						armTimer(effect.token, effect.deadline);
-						return;
 				}
 			};
 
 			const reconstruct = (extensionCtx: ExtensionContext, kind: "restart" | "navigation") => {
 				cancel?.abort();
 				cancel = undefined;
+				see(extensionCtx);
 				const found = latestFromEntries(extensionCtx.sessionManager.getBranch(), ENTRY_TYPE);
-				const armedHere = found?.waiting ? waits.has(found.waiting.token) : false;
-				run({ type: "recover", found, kind, armedHere }, extensionCtx);
+				run({ type: "recover", found, kind, timerArmed: timerArmed() }, extensionCtx);
 				publish();
 			};
 
@@ -292,7 +292,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			const stopWork = () => {
 				cancel?.abort();
 				cancel = undefined;
-				clearTimer();
 			};
 
 			const markTerminal = () => run({ type: "terminal" });
@@ -319,7 +318,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			ctx.onSessionShutdown(() => {
 				sessionEpoch++;
 				live = false;
-				clearTimer();
 				cancel?.abort();
 				cancel = undefined;
 				// Check commands run in their own process groups, which outlive pi unless killed here.
@@ -331,12 +329,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				run({ type: "turn-start" });
 			});
 
-			pi.on("before_agent_start", (event, extensionCtx) => {
-				if (!live) return undefined;
-				const source = event.messageType === "user" ? ({ source: "user" } as const) : classifyWake(event.message);
-				if (source) run({ type: "wake", wake: source }, extensionCtx);
-			});
-
 			pi.on("message_start", (event, extensionCtx) => {
 				if (!live) return undefined;
 				const message = event.message as { role?: string; customType?: string; details?: unknown };
@@ -345,16 +337,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 					if (typeof goalId === "string")
 						run({ type: "start-landed", goal: goalId, at: evidenceStart(extensionCtx) }, extensionCtx);
 				}
-				if (extensionCtx.isIdle()) return;
-				const source = classifyWake(message);
-				if (source) run({ type: "wake", wake: source }, extensionCtx);
-			});
-
-			pi.on("message_end", (event) => {
-				if (!live) return undefined;
-				if (!isStaleWake(event.message as { role?: string; customType?: string; details?: unknown }, life))
-					return undefined;
-				return { message: { ...event.message, content: [{ type: "text" as const, text: staleWaitText() }] } };
 			});
 
 			pi.on("turn_end", (event) => {
@@ -366,14 +348,19 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			pi.on("agent_before_settle", (event, extensionCtx) => {
 				if (!live) return undefined;
 				const errorMessage = event.outcome === "error" ? lastErrorMessage(extensionCtx) : undefined;
-				const drafts = run({ type: "before-settle", outcome: event.outcome, errorMessage }, extensionCtx);
+				see(extensionCtx);
+				const drafts = run(
+					{ type: "before-settle", outcome: event.outcome, errorMessage, timerArmed: timerArmed() },
+					extensionCtx,
+				);
 				if (drafts.length === 0) return undefined;
 				return { entries: [...event.entries, ...drafts], continue: true };
 			});
 
 			pi.on("agent_settled", (event, extensionCtx) => {
 				if (!live) return undefined;
-				run({ type: "settled", aborted: event.aborted }, extensionCtx);
+				see(extensionCtx);
+				run({ type: "settled", aborted: event.aborted, timerArmed: timerArmed() }, extensionCtx);
 			});
 
 			pi.on("session_compact", (_event, extensionCtx) => {
@@ -383,7 +370,8 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 
 			pi.on("tool_call", (event, extensionCtx) => {
 				if (!live) return undefined;
-				if (event.toolName !== CLAIM_TOOL && event.toolName !== WAIT_TOOL) return undefined;
+				run({ type: "tool-call" });
+				if (event.toolName !== CLAIM_TOOL) return undefined;
 				const problem = checkOnlyCall(event, extensionCtx);
 				if (!problem) return undefined;
 				const drop = problem.nested
@@ -393,70 +381,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 					block: true,
 					reason: `${event.toolName} must be the only tool call in its message. ${drop}, then call it again. This does not count against the goal.`,
 				};
-			});
-
-			pi.registerTool({
-				name: WAIT_TOOL,
-				label: "Goal Wait",
-				description: WAIT_DESCRIPTION,
-				promptSnippet: "Yield for an armed external event, with an optional timeout fallback",
-				executionMode: "sequential",
-				exposure: "model-only",
-				parameters: Type.Object({
-					reason: Type.String({ description: "What external work this goal is waiting for" }),
-					timeoutMs: Type.Optional(
-						Type.Number({
-							description: `Optional positive fallback timeout in milliseconds; omit to wait indefinitely, maximum ${MAX_WAIT_TIMEOUT_MS}`,
-							minimum: 1,
-							maximum: MAX_WAIT_TIMEOUT_MS,
-						}),
-					),
-				}),
-				async execute(_id, params, _signal, _onUpdate, extensionCtx) {
-					ui = extensionCtx;
-					const current = life.record;
-					if (!isActive(current)) return text(NO_GOAL);
-					if (current.waiting) {
-						markTerminal();
-						return {
-							...text(
-								`An external wait is already armed: ${current.waiting.reason}. Let its wake or timeout arrive; do not arm another wait.`,
-								{ goal: current.id, generation: current.generation, waitToken: current.waiting.token },
-							),
-							terminate: true,
-						};
-					}
-					const reason = params.reason.trim();
-					if (!reason) return text("goal_wait requires a concrete reason tied to armed external work.");
-					const timeoutMs = params.timeoutMs;
-					if (
-						timeoutMs !== undefined &&
-						(!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_WAIT_TIMEOUT_MS)
-					)
-						return text(`timeoutMs must be between 1 and ${MAX_WAIT_TIMEOUT_MS} milliseconds, or be omitted.`);
-					const now = Date.now();
-					const token = randomUUID();
-					const deadline = timeoutMs === undefined ? undefined : now + Math.round(timeoutMs);
-					const next = beginWait(current, { token, reason, deadline }, now);
-					if (!save(next))
-						return text(
-							"The external wait could not be saved. Continue working or report the persistence failure with notify kind=blocked; the wait was not armed.",
-						);
-					if (deadline !== undefined) armTimer(token, deadline);
-					markTerminal();
-					const suffix =
-						deadline !== undefined
-							? ` Timeout fallback: ${Math.round((deadline - now) / 1000)} seconds.`
-							: " No timeout was requested.";
-					return {
-						...text(`External wait armed for ${reason}.${suffix} The next external wake resumes the active goal.`, {
-							goal: next.id,
-							generation: next.generation,
-							waitToken: token,
-						}),
-						terminate: true,
-					};
-				},
 			});
 
 			const callModel = async (
@@ -499,7 +423,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 					}),
 				}),
 				async execute(_id, params, signal, onUpdate, extensionCtx) {
-					ui = extensionCtx;
+					see(extensionCtx);
 					const current = life.record;
 					if (!isActive(current)) return text(NO_GOAL);
 					if (claimInFlight) return text("A claim is already being adjudicated. Wait for its verdict.");
@@ -566,7 +490,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 								);
 							cancel?.abort();
 							cancel = undefined;
-							clearTimer();
 							notice(`Goal achieved: ${outcome.reason}`, "info");
 							report({ kind: "done", title: "pi goal: achieved", message: "Goal achieved", detail: outcome.reason });
 							markTerminal();
@@ -633,9 +556,9 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				// of the replaced goal never counts as proof for this one.
 				const started = { ...next, evidenceFrom: undefined };
 				if (!save(started)) return;
+				life = { ...life, cycle: { ...life.cycle, stalls: 0 } };
 				cancel?.abort();
 				cancel = new AbortController();
-				clearTimer();
 				extensionCtx.ui.notify(`${headline} ${next.condition}`, "info");
 				wake({
 					customType: START_MESSAGE,
@@ -660,11 +583,11 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				description: "Set an autonomous goal, or inspect, pause, resume, or clear one",
 				getArgumentCompletions: (prefix) => goalTemplateCompletions(prefix, pi.getCommands()),
 				async handler(args, extensionCtx) {
-					ui = extensionCtx;
+					see(extensionCtx);
 					const input = (args ?? "").trim();
 					const record = life.record;
 					if (!input) {
-						extensionCtx.ui.notify(describe(record, Date.now()), "info");
+						extensionCtx.ui.notify([describe(record, Date.now()), ...goalTimerLines(record)].join("\n"), "info");
 						return;
 					}
 					operation++;
@@ -699,14 +622,21 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 							extensionCtx.ui.notify("No goal to resume.", "warning");
 							return;
 						}
-						if (isActive(record) && record.waiting) {
-							wake({
-								customType: WAIT_RESUME_MESSAGE,
-								content: WAIT_RESUME_TEXT,
-								display: true,
-								details: { ...goalDetails(record), waitToken: record.waiting.token, wake: "resume" },
-							});
-							extensionCtx.ui.notify("External wait resumed. The goal will continue now.", "info");
+						if (isActive(record) && extensionCtx.isIdle() && sessionId !== undefined) {
+							const fired = timers.fireNow({ sessionId, createdSince: record.startedAt });
+							if (fired === 0) {
+								const hint = record.detail && record.rejected > 0 ? rejectionHint(record.detail) : undefined;
+								wake({
+									customType: CONTINUE_MESSAGE,
+									content: continuationText(record, hint),
+									display: true,
+									details: goalDetails(record),
+								});
+							}
+							extensionCtx.ui.notify(
+								fired > 0 ? `Fired ${fired} goal timer(s) now.` : "The goal continues now.",
+								"info",
+							);
 							return;
 						}
 						const attempt = resume(record, Date.now());
@@ -766,7 +696,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			pi.registerCommand("goal-check", {
 				description: "Set the verification command of the goal, or clear it with no argument",
 				async handler(args, extensionCtx) {
-					ui = extensionCtx;
+					see(extensionCtx);
 					const command = (args ?? "").trim();
 					const record = life.record;
 					if (!record || (record.state !== "active" && record.state !== "paused")) {

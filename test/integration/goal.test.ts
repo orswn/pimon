@@ -9,7 +9,14 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import type { ExecFn } from "../../src/core/exec.ts";
 import { defineFeature } from "../../src/core/feature.ts";
-import { clearReloadState } from "../../src/core/reload-state.ts";
+import { clearReloadState, reloadSlot } from "../../src/core/reload-state.ts";
+import { background } from "../../src/features/background/index.ts";
+import {
+	cancelTimers,
+	clearAllTimers,
+	createTimerStore,
+	type TimerStore,
+} from "../../src/features/background/timers.ts";
 import { createGoalFeature, type GoalStatePayload } from "../../src/features/goal/index.ts";
 import { type GoalRecord, latestFromEntries } from "../../src/features/goal/state.ts";
 import { createNotifyFeature } from "../../src/features/notify/index.ts";
@@ -20,6 +27,12 @@ const call = (tool: string, args: Parameters<typeof fauxToolCall>[1]) =>
 const say = (text: string) => fauxAssistantMessage(fauxText(text));
 const verdict = (done: boolean, reason: string) => say(JSON.stringify({ done, reason }));
 const blockedAlone = call("notify", { kind: "blocked", message: "needs a decision" });
+const setTimerCall = (reason: string, name?: string) =>
+	call("timer", { action: "set", delaySeconds: 600, reason, ...(name ? { name } : {}) });
+/** Arms a timer and ends the run, so an active goal settles. Two model requests. */
+const park = (reason = "CI result", name?: string) => [setTimerCall(reason, name), say("waiting")];
+const timerStore = () => reloadSlot<TimerStore>("background", "timers", 1, createTimerStore);
+const armedNames = () => [...timerStore().armed.values()].map((timer) => timer.name);
 
 function recordingExec(code = 0) {
 	const calls: { command: string; args: string[]; cwd?: string | undefined }[] = [];
@@ -32,6 +45,7 @@ function recordingExec(code = 0) {
 }
 
 const probeEvents: GoalStatePayload[] = [];
+let probeWake: (customType: string, content: string) => void = () => {};
 let slowStep = newSlowStep();
 function newSlowStep() {
 	let release: () => void = () => {};
@@ -50,6 +64,7 @@ const probe = defineFeature({
 	defaultEnabled: true,
 	setup(ctx) {
 		ctx.pi.events.on("goal:state", (payload) => probeEvents.push(payload as GoalStatePayload));
+		probeWake = (customType, content) => ctx.wake({ customType, content, display: true });
 		ctx.pi.registerTool({
 			name: "nested_claim",
 			label: "Nested claim",
@@ -97,6 +112,7 @@ async function start(
 	checkCalls = recordingExec(checkCode);
 	harness = await createHarness({
 		features: [
+			background,
 			createNotifyFeature({ exec: notifyCalls.exec }),
 			createGoalFeature({ exec: checkCalls.exec, ...goalOptions }),
 			probe,
@@ -107,6 +123,7 @@ async function start(
 }
 
 afterEach(() => {
+	clearAllTimers(timerStore());
 	harness?.dispose();
 	harness = undefined;
 	probeEvents.length = 0;
@@ -167,17 +184,17 @@ describe("goal in a session", () => {
 
 	it("rejects claims through the check command and pauses at the rejection budget", async () => {
 		const h = await start(1);
-		h.respond([call("goal_wait", { reason: "CI result" })]);
+		h.respond(park());
 		await h.session.prompt("/goal all tests pass");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
-		expect(goalRecord(h)?.waiting?.reason).toBe("CI result");
+		expect(armedNames()).toEqual(["timer-1"]);
 
 		await h.session.prompt("/goal-check npm test");
 		expect(goalRecord(h)?.check).toBe("npm test");
 		h.respond(Array.from({ length: 5 }, () => call("goal_done", { evidence: "ran npm test" })));
 		await h.session.prompt("/goal resume");
-		await h.waitForRequests(6);
+		await h.waitForRequests(7);
 		await settle(h);
 
 		const record = goalRecord(h);
@@ -185,34 +202,20 @@ describe("goal in a session", () => {
 		const checks = checkCalls.calls.filter((entry) => entry.command === "bash");
 		expect(checks).toHaveLength(5);
 		expect(checks[0]).toEqual({ command: "bash", args: ["-c", "npm test"], cwd: h.cwd });
-		expect(toolTexts(h.requests[2]).join("\n")).toContain("Claim rejected (check): check command exited 1");
-		expect(JSON.stringify(h.requests[1])).toContain("The goal condition changed.");
-		expect(JSON.stringify(h.requests[1])).toContain("npm test");
-		expect(h.requests).toHaveLength(6);
+		expect(toolTexts(h.requests[3]).join("\n")).toContain("Claim rejected (check): check command exited 1");
+		expect(JSON.stringify(h.requests[2])).toContain("The goal condition changed.");
+		expect(JSON.stringify(h.requests[2])).toContain("npm test");
+		expect(h.requests).toHaveLength(7);
 		expectPrefixChain(h.requests);
 		const ping = notifyCalls.calls.find((entry) => entry.command === "notify-send");
 		expect(ping?.args).toContain("pi goal: paused");
 	});
 
-	it("delivers the timeout of an armed wait as a timeout, not as stale", async () => {
-		const h = await start();
-		h.respond([call("goal_wait", { reason: "CI result", timeoutMs: 50 }), blockedAlone]);
-		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(2);
-		await settle(h, 200);
-
-		const woken = JSON.stringify(h.requests[1]);
-		expect(woken).toContain("The external wait timed out: CI result.");
-		expect(woken).not.toContain("stale");
-		expect(h.requests).toHaveLength(2);
-		expect(goalRecord(h)?.pauseReason).toBe("blocked");
-	});
-
 	it("refuses goal_done called from inside another tool", async () => {
 		const h = await start();
-		h.respond([call("nested_claim", {}), call("goal_wait", { reason: "build" })]);
+		h.respond([call("nested_claim", {}), ...park("build")]);
 		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(2);
+		await h.waitForRequests(3);
 		await settle(h);
 		expect(toolTexts(h.requests[1])).toContain(JSON.stringify({ isError: true }));
 		expect(goalRecord(h)?.state).toBe("active");
@@ -242,42 +245,54 @@ describe("goal in a session", () => {
 		expect(desktop[0]?.args).toContain("pi: blocked, needs you");
 	});
 
-	it("keeps a wait armed in this process across reload and pauses it once the process state is gone", async () => {
+	it("keeps an active goal with an armed timer across reload and pauses it once the process state is gone", async () => {
 		const h = await start();
-		h.respond([call("goal_wait", { reason: "deploy" })]);
+		h.respond(park("deploy"));
 		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 
 		await h.session.reload();
 		expect(goalRecord(h)?.state).toBe("active");
-		expect(goalRecord(h)?.waiting?.reason).toBe("deploy");
+		expect(armedNames()).toEqual(["timer-1"]);
 
+		clearAllTimers(timerStore());
 		clearReloadState();
 		await h.session.reload();
-		expect(goalRecord(h)).toMatchObject({ state: "paused", pauseReason: "wake-source-lost" });
+		expect(goalRecord(h)).toMatchObject({
+			state: "paused",
+			pauseReason: "wake-source-lost",
+			detail: "No timer is armed in this pi process.",
+		});
 		expect(notifyCalls.calls).toEqual([]);
 	});
 
-	it("answers goal tools outside a goal with no side effects", async () => {
+	it("answers goal_done outside a goal with no side effects", async () => {
 		const h = await start();
-		h.respond([call("goal_wait", { reason: "x" }), call("goal_done", { evidence: "y" }), say("ok")]);
+		h.respond([call("goal_done", { evidence: "y" }), say("ok")]);
 		await h.session.prompt("go");
-		await h.waitForRequests(3);
+		await h.waitForRequests(2);
 		expect(toolTexts(h.requests[1])).toEqual(["No goal is active."]);
-		expect(toolTexts(h.requests[2]).at(-1)).toBe("No goal is active.");
 		expect(goalRecord(h)).toBeUndefined();
+	});
+
+	it("has no goal_wait tool", async () => {
+		const h = await start();
+		const names = h.session.getAllTools().map((tool) => tool.name);
+		expect(names).toContain("goal_done");
+		expect(names).toContain("timer");
+		expect(names).not.toContain("goal_wait");
 	});
 
 	it("sets a goal from a long verb-like phrase and treats /goal check as goal text", async () => {
 		const h = await start();
-		h.respond([call("goal_wait", { reason: "a" }), call("goal_wait", { reason: "b" })]);
+		h.respond([...park("a"), ...park("b")]);
 		await h.session.prompt("/goal pause the server for maintenance");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		expect(goalRecord(h)?.condition).toBe("pause the server for maintenance");
 		await h.session.prompt("/goal check npm test");
-		await h.waitForRequests(2);
+		await h.waitForRequests(4);
 		await settle(h);
 		expect(goalRecord(h)).toMatchObject({ condition: "check npm test", check: undefined });
 	});
@@ -292,12 +307,12 @@ const goalEntries = (h: Harness) =>
 describe("goal never interrupts the running step", () => {
 	it("setting a goal during a slow tool call lets the tool finish and the start message lands after its result", async () => {
 		const h = await start();
-		h.respond([call("slow_step", {}), call("goal_wait", { reason: "build" })]);
+		h.respond([call("slow_step", {}), ...park("build")]);
 		await h.session.prompt("/goal first goal");
 		await slowStep.running;
 		await h.session.prompt("/goal second goal");
 		slowStep.release();
-		await h.waitForRequests(2);
+		await h.waitForRequests(3);
 		await settle(h);
 
 		const second = JSON.stringify(h.requests[1]);
@@ -373,16 +388,17 @@ describe("goal replacement and typo guard", () => {
 				return false;
 			},
 		});
-		h.respond([call("goal_wait", { reason: "build" })]);
+		h.respond(park("build"));
 		await h.session.prompt("/goal first goal");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		const before = goalRecord(h);
 
 		await h.session.prompt("/goal second goal");
 		expect(asked).toEqual([["Replace the current goal?", "Current: first goal\n\nNew: second goal"]]);
 		expect(goalRecord(h)).toEqual(before);
-		expect(h.requests).toHaveLength(1);
+		expect(h.requests).toHaveLength(2);
+		expect(armedNames()).toEqual(["timer-1"]);
 	});
 
 	it("/goal l resume with a paused goal asks the typo question, and No keeps the paused goal unchanged", async () => {
@@ -393,9 +409,9 @@ describe("goal replacement and typo guard", () => {
 				return false;
 			},
 		});
-		h.respond([call("goal_wait", { reason: "build" })]);
+		h.respond(park("build"));
 		await h.session.prompt("/goal first line\nsecond line\nthird line\nfourth line");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		await h.session.prompt("/goal pause");
 		const paused = goalRecord(h);
@@ -408,16 +424,16 @@ describe("goal replacement and typo guard", () => {
 
 	it("/goal l resume without UI refuses and keeps the goal", async () => {
 		const h = await start();
-		h.respond([call("goal_wait", { reason: "build" })]);
+		h.respond(park("build"));
 		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		await h.session.prompt("/goal pause");
 		const paused = goalRecord(h);
 
 		await h.session.prompt("/goal l resume");
 		expect(goalRecord(h)).toEqual(paused);
-		expect(h.requests).toHaveLength(1);
+		expect(h.requests).toHaveLength(2);
 	});
 });
 
@@ -432,14 +448,14 @@ describe("check adjudication limits", () => {
 			return { code: 0, stdout: "", stderr: "" };
 		};
 		const h = await start(0, undefined, { exec: slowCheck, modelTimeoutMs: 20 });
-		h.respond([call("goal_wait", { reason: "build" })]);
+		h.respond(park("build"));
 		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		await h.session.prompt("/goal-check npm test");
 		h.respond([call("goal_done", { evidence: "ran it" })]);
 		await h.session.prompt("/goal resume");
-		await h.waitForRequests(2);
+		await h.waitForRequests(3);
 		await settle(h);
 
 		expect(seen).toEqual([{ timeoutMs: 15 * 60_000, abortedAtEnd: false }]);
@@ -459,9 +475,9 @@ describe("check adjudication limits", () => {
 				);
 			});
 		const h = await start(0, undefined, { exec: hangingCheck });
-		h.respond([call("goal_wait", { reason: "build" })]);
+		h.respond(park("build"));
 		await h.session.prompt("/goal ship it");
-		await h.waitForRequests(1);
+		await h.waitForRequests(2);
 		await settle(h);
 		await h.session.prompt("/goal-check npm test");
 		h.respond([call("goal_done", { evidence: "ran it" }), say("after")]);
@@ -473,5 +489,260 @@ describe("check adjudication limits", () => {
 		expect(goalEntries(h).some((record) => record.pauseReason === "unverified")).toBe(false);
 		expect(notifyCalls.calls.some((entry) => entry.args.includes("pi goal: paused"))).toBe(false);
 		expect(h.extensionErrors).toEqual([]);
+	});
+});
+
+describe("goal waits on timers", () => {
+	it("settles while a timer is armed and continues while none is armed", async () => {
+		const h = await start();
+		h.respond([say("thinking"), ...park("CI result")]);
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(3);
+		await settle(h);
+
+		expect(JSON.stringify(h.requests[1])).toContain("Goal continuation");
+		expect(JSON.stringify(h.requests[1])).toContain("A run ends only while a timer is armed.");
+		expect(h.requests).toHaveLength(3);
+		expect(goalRecord(h)?.state).toBe("active");
+		expect(armedNames()).toEqual(["timer-1"]);
+		const due = timerStore().armed.values().next().value?.dueAt;
+		expect(probeEvents.at(-1)).toMatchObject({ state: "active", timerDueAt: due });
+	});
+
+	it("a background wake neither cancels nor consumes the timer", async () => {
+		const h = await start();
+		h.respond(park("deploy"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+
+		h.respond([say("noted the job exit"), say("must not be requested")]);
+		probeWake("background", "Background job build exited 0");
+		await h.waitForRequests(3);
+		await settle(h);
+
+		expect(JSON.stringify(h.requests[2])).toContain("Background job build exited 0");
+		expect(h.requests).toHaveLength(3);
+		expect(armedNames()).toEqual(["timer-1"]);
+		expect(goalRecord(h)?.state).toBe("active");
+	});
+
+	it("pauses as stalled after 3 runs in a row without a tool call and without a timer", async () => {
+		const h = await start();
+		h.respond([say("one"), say("two"), say("three"), say("must not be requested")]);
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(3);
+		await settle(h);
+
+		expect(h.requests).toHaveLength(3);
+		expect(goalRecord(h)).toMatchObject({
+			state: "paused",
+			pauseReason: "stalled",
+			detail: "The agent ended 3 runs in a row without work and without a timer.",
+		});
+	});
+
+	it("a tool call resets the stall count", async () => {
+		const h = await start();
+		h.respond([
+			say("one"),
+			say("two"),
+			call("noop", {}),
+			say("after the tool"),
+			say("four"),
+			say("five"),
+			say("six"),
+			say("must not be requested"),
+		]);
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(7);
+		await settle(h);
+
+		expect(h.requests).toHaveLength(7);
+		expect(goalRecord(h)).toMatchObject({ state: "paused", pauseReason: "stalled" });
+	});
+
+	async function goalWithOldTimer(h: Harness) {
+		h.respond([setTimerCall("before the goal", "old"), say("set")]);
+		await h.session.prompt("set a timer");
+		await h.waitForRequests(2);
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
+
+	it.each([
+		["pause", "/goal pause", "paused"],
+		["clear", "/goal clear", "cleared"],
+	])("%s cancels the timers set since the goal started and keeps an older one", async (_name, command, state) => {
+		const h = await start();
+		await goalWithOldTimer(h);
+		h.respond(park("goal work", "goal"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(4);
+		await settle(h);
+		expect(armedNames()).toEqual(["old", "goal"]);
+
+		await h.session.prompt(command);
+		expect(goalRecord(h)?.state).toBe(state);
+		expect(armedNames()).toEqual(["old"]);
+	});
+
+	it("an accepted claim cancels the goal's timers and keeps an older one", async () => {
+		const h = await start();
+		await goalWithOldTimer(h);
+		h.respond([setTimerCall("goal work", "goal"), call("goal_done", { evidence: "done" }), verdict(true, "ok")]);
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(5);
+		await settle(h);
+
+		expect(goalRecord(h)?.state).toBe("achieved");
+		expect(armedNames()).toEqual(["old"]);
+	});
+
+	it("a replaced goal takes its timers along and keeps an older one", async () => {
+		const h = await start();
+		await goalWithOldTimer(h);
+		h.respond(park("first goal work", "first"));
+		await h.session.prompt("/goal first goal");
+		await h.waitForRequests(4);
+		await settle(h);
+
+		h.respond(park("second goal work", "second"));
+		await h.session.prompt("/goal second goal");
+		await h.waitForRequests(6);
+		await settle(h);
+
+		expect(goalRecord(h)).toMatchObject({ condition: "second goal", state: "active" });
+		expect(armedNames()).toEqual(["old", "second"]);
+	});
+
+	it("/goal resume on an active idle goal fires its timer at once", async () => {
+		const h = await start();
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+
+		h.respond(park("CI again", "ci"));
+		await h.session.prompt("/goal resume");
+		await h.waitForRequests(4);
+		await settle(h);
+
+		expect(JSON.stringify(h.requests[2])).toContain('Timer \\"ci\\" fired');
+		expect(JSON.stringify(h.requests[2])).toContain("Reason: CI result");
+		expect(h.requests).toHaveLength(4);
+		expect(goalRecord(h)?.state).toBe("active");
+	});
+
+	it("loads and renders a goal saved with a waiting field", async () => {
+		const h = await start(0, { confirm: async () => true });
+		h.respond(park());
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+		const saved = goalRecord(h);
+		if (!saved) throw new Error("no goal");
+		h.session.sessionManager.appendCustomEntry("goal", {
+			...saved,
+			waiting: { token: "w1", reason: "CI result", generation: saved.generation },
+		});
+
+		await h.session.reload();
+		expect(goalRecord(h)?.state).toBe("active");
+		await h.session.prompt("/goal");
+		expect(h.uiNotices.at(-1)).toMatch(/^Goal \(active\): ship it\n/);
+		expect(h.uiNotices.at(-1)).not.toContain("waiting");
+	});
+});
+
+describe("goal and timer changes", () => {
+	const confirmYes = { confirm: async () => true };
+	const IDLE_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
+
+	it("keeps the goal active when its timer fired during the reload and delivers that timer after it", async () => {
+		const h = await start();
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+
+		const store = timerStore();
+		const fired = [...store.armed.values()].map(({ handle: _handle, ...info }) => info);
+		cancelTimers(store, { sessionId: h.session.sessionManager.getSessionId() });
+		store.queue.push(...fired);
+
+		h.respond(park("CI again", "ci"));
+		await h.session.reload();
+		await h.waitForRequests(4);
+		await settle(h);
+
+		expect(JSON.stringify(h.requests[2])).toContain('Timer \\"ci\\" fired');
+		expect(goalRecord(h)?.state).toBe("active");
+		expect(goalEntries(h).some((record) => record.pauseReason === "wake-source-lost")).toBe(false);
+	});
+
+	it("/goal resume on an active idle goal without a goal timer sends the continuation", async () => {
+		const h = await start(0, confirmYes);
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+		await h.session.prompt("/timers cancel ci");
+
+		h.respond(park("CI again", "ci"));
+		await h.session.prompt("/goal resume");
+		await h.waitForRequests(4);
+		await settle(h);
+
+		expect(JSON.stringify(h.requests[2])).toContain("Goal continuation");
+		expect(JSON.stringify(h.requests[2])).not.toContain("fired");
+		expect(goalRecord(h)?.state).toBe("active");
+	});
+
+	it("publishes a fresh timerDueAt and warns once when the last goal timer is cancelled while idle", async () => {
+		const h = await start(0, confirmYes);
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+		const due = timerStore().armed.values().next().value?.dueAt;
+		expect(probeEvents.at(-1)).toMatchObject({ state: "active", timerDueAt: due });
+		expect(h.uiNotices).not.toContain(IDLE_WARNING);
+
+		await h.session.prompt("/timers cancel ci");
+		expect(probeEvents.at(-1)).toEqual({ state: "active", turns: expect.any(Number) as number });
+		expect(h.uiNotices.filter((text) => text === IDLE_WARNING)).toHaveLength(1);
+		expect(goalRecord(h)?.state).toBe("active");
+	});
+
+	it("does not warn when a goal timer fires, when a timer outlives its goal, or when a goal is replaced", async () => {
+		const h = await start(0, confirmYes);
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+
+		h.respond(park("CI again", "ci"));
+		await h.session.prompt("/goal resume");
+		await h.waitForRequests(4);
+		await settle(h);
+
+		h.respond(park("second goal", "second"));
+		await h.session.prompt("/goal another goal");
+		await h.waitForRequests(6);
+		await settle(h);
+		await h.session.prompt("/goal pause");
+
+		expect(h.uiNotices).not.toContain(IDLE_WARNING);
+	});
+
+	it("/goal lists the goal's armed timers", async () => {
+		const h = await start(0, confirmYes);
+		h.respond(park("CI result", "ci"));
+		await h.session.prompt("/goal ship it");
+		await h.waitForRequests(2);
+		await settle(h);
+
+		await h.session.prompt("/goal");
+		expect(h.uiNotices.at(-1)).toMatch(/\ntimer ci: fires at \d\d:\d\d:\d\d\. Reason: CI result$/);
 	});
 });

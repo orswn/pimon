@@ -167,26 +167,25 @@ describe.concurrent("goal through a real pi", () => {
 		const target = join(pi.work, "wait-done.txt");
 		const steered = join(pi.work, "wait-steered.txt");
 		pi.send(
-			`/goal start a background job named waitjob with command "sleep 2; echo READY" and wait for its exit with goal_wait, then create ${target} containing READY and verify it with cat`,
+			`/goal start a background job named waitjob with command "sleep 2; echo READY", set a timer of 120 seconds as the fallback, and wait for the job exit, then create ${target} containing READY and verify it with cat`,
 		);
 		expect(await pi.waitFor(/Goal set/, 20_000)).toBe(true);
-		expect(await pi.waitFor(/External wait armed/, 60_000)).toBe(true);
+		expect(await pi.waitFor(/Timer "[^"]+" set/, 60_000)).toBe(true);
 		pi.send(`while waiting, also create ${steered} containing STEER`);
 		expect(await pi.waitFor(() => existsSync(steered), 90_000)).toBe(true);
 		expect(await pi.waitFor(() => existsSync(target), 180_000)).toBe(true);
 		await pi.close();
 	});
 
-	it("wakes the goal through the wait timeout when no notification comes", async () => {
+	it("wakes the goal through a timer when no notification comes", async () => {
 		const pi = startPi("wait-timeout");
 		const target = join(pi.work, "timeout-done.txt");
 		pi.send(
-			`/goal start a background job named silentjob with command "sleep 30" and notifyExit=false, then call goal_wait with reason "silent job completion" and timeoutMs=3000. When the timeout notice arrives, create ${target} containing TIMEOUT and verify it with cat`,
+			`/goal start a background job named silentjob with command "sleep 30" and notifyExit=false, then set a timer of 3 seconds with reason "silent job completion". When the timer fires, create ${target} containing TIMEOUT and verify it with cat`,
 		);
 		expect(await pi.waitFor(/Goal set/, 20_000)).toBe(true);
-		expect(await pi.waitFor(/External wait armed/, 60_000)).toBe(true);
-		expect(await pi.waitFor(/The external wait timed out/, 90_000)).toBe(true);
-		expect(pi.text()).not.toMatch(/external-wait notice is stale/);
+		expect(await pi.waitFor(/Timer "[^"]+" set/, 60_000)).toBe(true);
+		expect(await pi.waitFor(/Timer "[^"]+" fired/, 90_000)).toBe(true);
 		expect(await pi.waitFor(() => existsSync(target), 120_000)).toBe(true);
 		await pi.close();
 	});
