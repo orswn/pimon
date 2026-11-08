@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-09
+
 ### Removed
 
 - Support for the standalone bus and agents extensions and for the old model cache. pimon no longer reads `PI_AGENTS_TOOLS`, the old bus owner on `globalThis`, or `~/.cache/pi/dynamic-models/`, and no longer prunes the old launcher dir. A reply to a message without a sender owner is an error.
