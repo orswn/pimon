@@ -4,11 +4,11 @@ import type { TObject } from "typebox";
 import { Value } from "typebox/value";
 import type { Feature, FeatureId } from "./feature.ts";
 
-export const CONFIG_FILE = "pimon.json";
+const CONFIG_FILE = "pimon.json";
 
-export type FeatureSetting = boolean | { enabled?: boolean; [option: string]: unknown };
+type FeatureSetting = boolean | { enabled?: boolean; [option: string]: unknown };
 
-export interface PimonConfigFile {
+interface PimonConfigFile {
 	features?: Record<FeatureId, FeatureSetting>;
 }
 
@@ -17,7 +17,7 @@ export type FeaturePlan =
 	| { id: FeatureId; state: "disabled"; reason: string }
 	| { id: FeatureId; state: "invalid"; reason: string };
 
-export interface LoadedConfig {
+interface LoadedConfig {
 	path: string;
 	file: PimonConfigFile;
 	problems: string[];
@@ -73,6 +73,8 @@ function validateOptions(id: FeatureId, schema: TObject, options: Record<string,
 	if (!Value.Check(schema, config)) {
 		const first = Value.Errors(schema, config)[0];
 		const where = first?.instancePath || "/";
+		if (first?.schemaPath === "#/additionalProperties")
+			return { id, state: "invalid", reason: `unknown option ${where.slice(1)}` };
 		return { id, state: "invalid", reason: `option ${where}: ${first?.message ?? "invalid"}` };
 	}
 	return { id, state: "enabled", config };

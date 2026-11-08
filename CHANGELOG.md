@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Changed
+
+- Unknown `statusline` and `vi` options are an error that turns the feature off, like the options of other features. The message names the unknown option.
+
 ## [0.12.1] - 2026-11-08
 
 ### Changed

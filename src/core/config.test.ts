@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { statusline } from "../features/statusline/index.ts";
+import { vi } from "../features/vi/index.ts";
 import { loadConfigFile, planFeature } from "./config.ts";
 import { defineFeature } from "./feature.ts";
 
@@ -33,6 +35,23 @@ describe("planFeature", () => {
 		expect(planFeature(tuned, { limit: 9 })).toEqual({ id: "tuned", state: "enabled", config: { limit: 9 } });
 		expect(planFeature(tuned, { limit: 0 })).toMatchObject({ state: "invalid" });
 		expect(planFeature(tuned, { lmit: 3 })).toMatchObject({ state: "invalid" });
+	});
+
+	it("names an unknown option in the reason", () => {
+		expect(planFeature(tuned, { lmit: 3 })).toEqual({ id: "tuned", state: "invalid", reason: "unknown option lmit" });
+	});
+
+	it("rejects unknown statusline and vi options", () => {
+		expect(planFeature(statusline, { usagePolSeconds: 60 })).toEqual({
+			id: "statusline",
+			state: "invalid",
+			reason: "unknown option usagePolSeconds",
+		});
+		expect(planFeature(vi, { clipbord: "never" })).toEqual({
+			id: "vi",
+			state: "invalid",
+			reason: "unknown option clipbord",
+		});
 	});
 
 	it("rejects options for a feature without a schema", () => {

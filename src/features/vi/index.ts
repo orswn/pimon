@@ -7,10 +7,13 @@ import { createCursorShape, type CursorShape } from "./cursor.ts";
 import { ViEditor } from "./editor.ts";
 import { type CopyFn, createClipboardMirror } from "./register.ts";
 
-const configSchema = Type.Object({
-	clipboard: Type.Union([Type.Literal("yank"), Type.Literal("never")], { default: "yank" }),
-	cursorShape: Type.Boolean({ default: true }),
-});
+const configSchema = Type.Object(
+	{
+		clipboard: Type.Union([Type.Literal("yank"), Type.Literal("never")], { default: "yank" }),
+		cursorShape: Type.Boolean({ default: true }),
+	},
+	{ additionalProperties: false },
+);
 
 export interface ViFeatureOptions {
 	/** Writes the system clipboard. Tests inject a fake. */

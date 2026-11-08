@@ -25,11 +25,14 @@ import {
 	type UsagePoller,
 } from "./usage.ts";
 
-const configSchema = Type.Object({
-	usage: Type.Boolean({ default: true }),
-	usagePollSeconds: Type.Integer({ minimum: 30, maximum: 3600, default: 60 }),
-	gitStatus: Type.Boolean({ default: true }),
-});
+const configSchema = Type.Object(
+	{
+		usage: Type.Boolean({ default: true }),
+		usagePollSeconds: Type.Integer({ minimum: 30, maximum: 3600, default: 60 }),
+		gitStatus: Type.Boolean({ default: true }),
+	},
+	{ additionalProperties: false },
+);
 
 export interface StatuslineFeatureOptions {
 	/** Runs git. Tests inject a recorder. */
