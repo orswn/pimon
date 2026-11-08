@@ -153,16 +153,45 @@ describe("escape", () => {
 		expect(s.editor.mode).toBe("normal");
 	});
 
-	it("forwards a normal-mode Esc but swallows a second one within 500 ms", () => {
+	it("lets mashed Esc keys that leave insert mode reach pi once", () => {
 		const s = setup();
 		s.press(ESC, ESC);
 		expect(s.onEscape).toHaveBeenCalledTimes(1);
-		s.advance(300);
-		s.press(ESC);
+		for (let i = 0; i < 4; i++) {
+			s.advance(300);
+			s.press(ESC);
+		}
 		expect(s.onEscape).toHaveBeenCalledTimes(1);
-		s.advance(250);
+		s.advance(500);
 		s.press(ESC);
 		expect(s.onEscape).toHaveBeenCalledTimes(2);
+	});
+
+	it("forwards a double Esc pressed in normal mode, so pi can run its double-Escape action", () => {
+		const s = setup();
+		s.press(ESC);
+		s.advance(600);
+		s.press(ESC);
+		s.advance(200);
+		s.press(ESC);
+		expect(s.onEscape).toHaveBeenCalledTimes(2);
+	});
+
+	it.each([["i"], ["d"]])("lets mashed Esc keys reach pi once across %s in the burst", (key) => {
+		const s = setup();
+		for (const k of [ESC, ESC, key, ESC, ESC]) {
+			s.press(k);
+			s.advance(100);
+		}
+		expect(s.onEscape).toHaveBeenCalledTimes(1);
+	});
+
+	it("lets mashed Esc keys that clear a pending command reach pi once", () => {
+		const s = setup();
+		s.press("ab", ESC);
+		s.advance(600);
+		s.press("d", ESC, ESC, ESC);
+		expect(s.onEscape).toHaveBeenCalledTimes(1);
 	});
 
 	it("only clears a pending command", () => {

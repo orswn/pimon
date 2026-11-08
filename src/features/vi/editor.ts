@@ -28,7 +28,7 @@ export interface ViEditorOptions {
 	onError?: (message: string) => void;
 }
 
-/** pi runs its double-Escape action for 2 presses within 500 ms. */
+/** pi runs its double-Escape action for 2 presses within 500 ms. Esc presses closer than this form one burst. */
 const ESCAPE_REPEAT_MS = 500;
 const TAIL = "───";
 
@@ -63,7 +63,9 @@ export class ViEditor extends CustomEditor {
 	private register: Register | undefined;
 	private lastFind: Find | undefined;
 	private want = 0;
-	private lastForwardedEscape = Number.NEGATIVE_INFINITY;
+	private lastEscape = Number.NEGATIVE_INFINITY;
+	private guardedBurst = false;
+	private forwardedInBurst = false;
 	private redoStack: Snapshot[] = [];
 	private redoAnchor: string | undefined;
 	private reported = false;
@@ -128,6 +130,7 @@ export class ViEditor extends CustomEditor {
 
 	private insertKey(adapter: Adapter, data: string): void {
 		if (matchesKey(data, "escape")) {
+			this.startGuardedBurst();
 			// Esc first closes the autocomplete list, then leaves insert mode.
 			if (this.isShowingAutocomplete()) this.forward(data);
 			this.setMode("normal");
@@ -164,11 +167,20 @@ export class ViEditor extends CustomEditor {
 			return;
 		}
 		if (key.key === "escape") {
-			if (this.parser.pending) return this.parser.reset();
+			if (this.parser.pending) {
+				this.startGuardedBurst();
+				return this.parser.reset();
+			}
 			const now = (this.options.now ?? Date.now)();
-			// A second Esc within the window would start pi's double-Escape action.
-			if (now - this.lastForwardedEscape < ESCAPE_REPEAT_MS) return;
-			this.lastForwardedEscape = now;
+			if (now - this.lastEscape >= ESCAPE_REPEAT_MS) {
+				this.guardedBurst = false;
+				this.forwardedInBurst = false;
+			}
+			this.lastEscape = now;
+			// Mashed Esc keys after leaving insert mode or a pending command reach pi once, so they do not
+			// start pi's double-Escape action. A double Esc pressed in normal mode reaches pi.
+			if (this.guardedBurst && this.forwardedInBurst) return;
+			this.forwardedInBurst = true;
 			this.forward(data);
 			return;
 		}
@@ -177,6 +189,14 @@ export class ViEditor extends CustomEditor {
 		this.parser.reset();
 		this.forward(data);
 		this.clamp(adapter);
+	}
+
+	private startGuardedBurst(): void {
+		const now = (this.options.now ?? Date.now)();
+		// An Esc that pi got earlier in the same burst still counts toward its double-Escape window.
+		if (now - this.lastEscape >= ESCAPE_REPEAT_MS) this.forwardedInBurst = false;
+		this.lastEscape = now;
+		this.guardedBurst = true;
 	}
 
 	private isUndoKey(data: string, id: string | undefined): boolean {

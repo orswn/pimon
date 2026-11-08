@@ -178,6 +178,7 @@ All features are on by default. The list is in load order.
 - Options:
   - `clipboard`: `"yank"` or `"never"`, default `"yank"`. `"yank"` copies yanked text to the system clipboard.
   - `cursorShape`: boolean, default `true`. Changes the terminal cursor shape for each mode.
+- Esc: in insert mode, Esc goes to normal mode. In normal mode, Esc goes to pi, so it stops a run, and a double Esc runs pi's double-Escape action (`/tree` by default). Esc keys pressed in quick succession after leaving insert mode or a pending command reach pi only once.
 - External commands: only with `clipboard: "yank"`. Through pi, one of `wl-copy`, `xclip`, `xsel`, `pbcopy`, or `termux-clipboard-set`. pi also writes OSC 52.
 
 ## Environment
