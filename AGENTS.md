@@ -27,14 +27,19 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Start long-lived work in `ctx.onSessionStart`. Stop it in `ctx.onSessionShutdown`.
 - Keep state that must survive `/reload` in `ctx.reloadState(key, version, create)`. Bump the version when the shape changes.
 - Use `ctx.service(id)` for another feature's service. List that feature in `dependsOn`.
-- Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that.
+- Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that. Exception: the `bus` feature keeps the `pi-bus:identity` and `pi-bus:refresh` bridge on `pi.events` for the standalone statusline.
 - Read options only from `ctx.config`. Declare them in `configSchema`.
 - Start or steer a model run only through `ctx.wake`. Do not call `pi.sendMessage` with `triggerTurn`.
 
 ## Prompt and cache rules
 
 - Add model guidance with `ctx.promptSection`. Never return `systemPrompt` from `before_agent_start`.
-- A section's text depends only on its `PromptInput`. No time, counters, job lists, or other live state.
+- A section's text depends only on:
+  - its `PromptInput`,
+  - the active tools at the first render (`requiresTools`),
+  - state that a feature fixes before the first render and never changes for that runtime.
+- No time, counters, job lists, or other live state in section text.
+- Sections render once per runtime, after all `onSessionStart` handlers. Later tool changes do not re-render them.
 - Never change tool names, descriptions, or schemas after load.
 - Live state reaches the model through tool results or custom messages, never through the system prompt.
 - Each change to prompt text or tool text updates the snapshot test in the same commit.

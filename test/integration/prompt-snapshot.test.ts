@@ -5,7 +5,10 @@ import { createHarness, type Harness } from "../support/harness.ts";
 
 describe("rendered prompt sections", () => {
 	let harness: Harness | undefined;
-	afterEach(() => harness?.dispose());
+	afterEach(async () => {
+		await harness?.shutdown();
+		harness?.dispose();
+	});
 
 	it("matches the reviewed text for every default feature", async () => {
 		harness = await createHarness({ features });
