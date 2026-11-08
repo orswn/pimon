@@ -17,11 +17,11 @@ import {
 	wakePolicyOf,
 } from "./identity.ts";
 import { BusNode, type PeerGone, type SendInit } from "./node.ts";
-import { ExpectedExits, lapseNotice, peerGoneNotice, peerGoneWakes } from "./notices.ts";
+import { ExpectedExits, lapseNotice, peerGoneNotice, peerGoneWakes, sentBy } from "./notices.ts";
 import type { Envelope, PeerRecord, PendingQuestion, ProbeResult, SendResult } from "./protocol.ts";
 import { BUS_PROMPT } from "./prompt.ts";
 import type { QueuedDigest } from "./queue.ts";
-import { type BusDirs, busDirs, sessionTag } from "./registry.ts";
+import { type BusDirs, busDirs, scanPeers, sessionTag } from "./registry.ts";
 import { BusStore, prepareHistory, type StoreSnapshot } from "./store.ts";
 import {
 	type ActionHost,
@@ -564,11 +564,20 @@ class BusRuntime implements ActionHost {
 
 	openState(): string | undefined {
 		const node = this.started;
-		return renderOpenState(
-			this.currentStore.unread.size,
-			node?.pendingQuestions() ?? [],
-			this.currentStore.unansweredInbound(),
-		);
+		return renderOpenState(this.currentStore.unread.size, node?.pendingQuestions() ?? [], this.answerableInbound());
+	}
+
+	/** A reply to a peer that left cannot be delivered. When the scan fails, keep every question. */
+	private answerableInbound(): Envelope[] {
+		const questions = this.currentStore.unansweredInbound();
+		if (questions.length === 0) return questions;
+		let live: PeerRecord[];
+		try {
+			live = scanPeers(this.dirs);
+		} catch {
+			return questions;
+		}
+		return questions.filter((envelope) => live.some((record) => sentBy(envelope, record)));
 	}
 
 	setState(state: "busy" | "idle", activity?: string): void {

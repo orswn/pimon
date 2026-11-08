@@ -1,7 +1,7 @@
 import { ago, ownerRef, truncate } from "./digest.ts";
 import type { WakePolicy } from "./identity.ts";
 import type { PeerGone } from "./node.ts";
-import type { Envelope, PendingQuestion } from "./protocol.ts";
+import type { Envelope, PeerRecord, PendingQuestion } from "./protocol.ts";
 
 export function peerGoneNotice(event: PeerGone): string {
 	const who = `${event.record.name} (${ownerRef(event.record)})`;
@@ -29,13 +29,15 @@ export interface PeerGoneContext {
 	unansweredInbound: Envelope[];
 }
 
+export function sentBy(envelope: Envelope, record: PeerRecord): boolean {
+	return envelope.from.owner ? envelope.from.owner === record.owner : envelope.from.instanceId === record.instanceId;
+}
+
 /** A peer exit wakes only when work is owed to or from that peer, or it is a child, and the wake policy allows it. */
 export function peerGoneWakes(event: PeerGone, context: PeerGoneContext): boolean {
 	const record = event.record;
 	const owedFrom = event.pending.length > 0;
-	const owedTo = context.unansweredInbound.some((envelope) =>
-		envelope.from.owner ? envelope.from.owner === record.owner : envelope.from.instanceId === record.instanceId,
-	);
+	const owedTo = context.unansweredInbound.some((envelope) => sentBy(envelope, record));
 	const parentLabel = record.labels["parent"];
 	const child = parentLabel === context.selfOwner || parentLabel === context.selfInstanceId;
 	if (!owedFrom && !owedTo && !child) return false;

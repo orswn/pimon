@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { existsSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { defineFeature } from "../../src/core/feature.ts";
@@ -313,6 +313,48 @@ describe("bus feature", () => {
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(h.requests.length).toBe(afterCompaction);
 		expect(h.session.isStreaming).toBe(false);
+	});
+
+	it("leaves out a question from a peer that stopped before the compaction", async () => {
+		const h = await start({ settings: { compaction: { enabled: false, keepRecentTokens: 1 } } });
+		const peer = await startPeer("gone-asker");
+		await peer.send(`id:${busService().instanceId}`, { body: "stale question", kind: "question", wake: "never" });
+		h.respond([
+			fauxAssistantMessage(fauxToolCall("pi_bus", { action: "inbox" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxText("one")),
+			fauxAssistantMessage(fauxText("two")),
+		]);
+		await h.session.prompt("one");
+		expect(toolText(h).at(-1)).toContain("stale question");
+		await peer.stop();
+		peers.splice(peers.indexOf(peer), 1);
+		await h.session.prompt("two");
+		h.respond([fauxAssistantMessage(fauxText("summary")), fauxAssistantMessage(fauxText("prefix"))]);
+		await h.session.compact();
+		expect(h.session.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(true);
+		expect(customMessages(h, STATE_TYPE)).toHaveLength(0);
+	});
+
+	it("keeps a question listed after compaction when the peers dir cannot be read", async () => {
+		const h = await start({ settings: { compaction: { enabled: false, keepRecentTokens: 1 } } });
+		const peer = await startPeer("unseen-asker");
+		await peer.send(`id:${busService().instanceId}`, { body: "kept question", kind: "question", wake: "never" });
+		await peer.stop();
+		peers.splice(peers.indexOf(peer), 1);
+		h.respond([fauxAssistantMessage(fauxText("one")), fauxAssistantMessage(fauxText("two"))]);
+		await h.session.prompt("one");
+		await h.session.prompt("two");
+		const peersDir = busDirs(h.agentDir).peers;
+		chmodSync(peersDir, 0o000);
+		try {
+			h.respond([fauxAssistantMessage(fauxText("summary")), fauxAssistantMessage(fauxText("prefix"))]);
+			await h.session.compact();
+		} finally {
+			chmodSync(peersDir, 0o700);
+		}
+		const state = customMessages(h, STATE_TYPE);
+		expect(state).toHaveLength(1);
+		expect(String(state[0]?.content)).toContain("from unseen-asker");
 	});
 
 	it("adds no bus state after compaction when nothing is open", async () => {

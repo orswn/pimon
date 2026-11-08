@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_STATE_CHARS, MAX_STATE_ITEMS, renderOpenState } from "./digest.ts";
 import type { PeerGone } from "./node.ts";
-import { type PeerGoneContext, peerGoneWakes, ExpectedExits } from "./notices.ts";
+import { type PeerGoneContext, peerGoneWakes, ExpectedExits, sentBy } from "./notices.ts";
 import type { Envelope, PeerRecord, PendingQuestion } from "./protocol.ts";
 
 const SELF_OWNER = "a".repeat(32);
@@ -71,6 +71,16 @@ describe("peer exit wake rule", () => {
 		expect(peerGoneWakes(owed, context({ policy: "none" }))).toBe(false);
 		expect(peerGoneWakes(owed, context({ policy: "parent" }))).toBe(false);
 		expect(peerGoneWakes(owed, context({ policy: "parent", parent: "d".repeat(32) }))).toBe(true);
+	});
+});
+
+describe("sender match", () => {
+	it("matches by owner when the envelope has one, else by instance id", () => {
+		const peer = record();
+		expect(sentBy({ from: { owner: "d".repeat(32), instanceId: "x" } } as Envelope, peer)).toBe(true);
+		expect(sentBy({ from: { owner: "e".repeat(32), instanceId: "c".repeat(32) } } as Envelope, peer)).toBe(false);
+		expect(sentBy({ from: { instanceId: "c".repeat(32) } } as Envelope, peer)).toBe(true);
+		expect(sentBy({ from: { instanceId: "x" } } as Envelope, peer)).toBe(false);
 	});
 });
 
