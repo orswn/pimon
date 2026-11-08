@@ -145,6 +145,8 @@ class BusRuntime implements ActionHost {
 	private cancelClose: (() => void) | undefined;
 	private lastIdentity: string | undefined;
 	private identitySent = false;
+	/** Set by a failed start. Prompts do not retry until the next session start. */
+	private startFailed = false;
 	private readonly ctx: FeatureContext<{ historyRetentionDays: number }>;
 	readonly identity: Identity;
 	private readonly sessions: Map<string, SavedSession>;
@@ -238,8 +240,15 @@ class BusRuntime implements ActionHost {
 	/** A listener that keeps the last identity needs it again after a session replacement or a failed start. */
 	async startSession(extCtx: ExtensionContext): Promise<void> {
 		this.identitySent = false;
+		this.startFailed = false;
 		await this.start(extCtx);
 		if (!this.identitySent) this.emitIdentity(true);
+	}
+
+	/** A failed bind fails again at once, so a prompt tries only when no start failed since the session start. */
+	async startForPrompt(extCtx: ExtensionContext): Promise<void> {
+		if (this.started || this.startFailed) return;
+		await this.start(extCtx);
 	}
 
 	bind(extCtx: ExtensionContext): void {
@@ -319,6 +328,7 @@ class BusRuntime implements ActionHost {
 			await node.start();
 		} catch (error) {
 			this.current = undefined;
+			this.startFailed = true;
 			this.ctx.log.error("bus failed to start", error);
 			this.notify(`pi-bus failed to start: ${(error as Error).message}`, "error");
 			return;
@@ -665,7 +675,7 @@ export const bus = defineFeature({
 
 		// pi skips session_start on an SDK reload without UI bindings.
 		pi.on("before_agent_start", async (_event, extensionCtx) => {
-			if (!runtime.started) await runtime.start(extensionCtx);
+			await runtime.startForPrompt(extensionCtx);
 		});
 
 		pi.on("message_end", (event) => {

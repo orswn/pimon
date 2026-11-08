@@ -745,7 +745,6 @@ export class BusNode {
 	 */
 	private async listen(): Promise<void> {
 		let suffix = "";
-		let lastError: Error | undefined;
 		for (let attempt = 0; attempt < 6; attempt++) {
 			const candidate = this.options.socketBase
 				? `${this.options.socketBase}${suffix}`
@@ -755,22 +754,19 @@ export class BusNode {
 				this.sock = candidate;
 				return;
 			}
-			if (outcome === "inuse") {
-				suffix = `-${Math.random().toString(36).slice(2, 6)}`;
-				continue;
-			}
-			lastError = new Error(`cannot bind ${candidate}`);
-			await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+			if (outcome !== "inuse") throw new Error(`cannot bind ${candidate}: ${outcome}`);
+			suffix = `-${Math.random().toString(36).slice(2, 6)}`;
 		}
-		throw lastError || new Error("cannot find a free bus socket path");
+		throw new Error("cannot find a free bus socket path");
 	}
 
-	private bindTo(path: string): Promise<"ok" | "inuse" | "error"> {
+	/** Resolves "ok", "inuse", or the error code. Only an occupied path can succeed on another try. */
+	private bindTo(path: string): Promise<string> {
 		return new Promise((resolve) => {
 			const server = createServer((socket) => this.accept(socket));
 			const onError = (error: NodeJS.ErrnoException) => {
 				this.options.log?.(`bind ${path} failed: ${error.code || error.message}`);
-				resolve(error.code === "EADDRINUSE" ? "inuse" : "error");
+				resolve(error.code === "EADDRINUSE" ? "inuse" : error.code || error.message);
 			};
 			server.once("error", onError);
 			try {
@@ -851,6 +847,8 @@ export class BusNode {
 
 		const attempt = (async () => {
 			try {
+				// A removed bus dir otherwise fails this bind and waits for the next beat.
+				ensureDirs(this.dirs);
 				await this.listen();
 				// stop() may have run while the bind was in flight. Anything acquired
 				// after that must be released again, or a stopped node stays alive.

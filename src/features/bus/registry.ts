@@ -5,6 +5,7 @@
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -70,14 +71,58 @@ export function pidBirth(pid: number): string | undefined {
 	}
 }
 
-export function socketPathFor(instanceId: string, dirs: BusDirs, suffix = ""): string {
+/** Why a shared fallback dir is unsafe for the socket, or undefined when it is safe. Tightens an open mode. */
+function fallbackDirProblem(dir: string): string | undefined {
+	try {
+		mkdirSync(dir, { recursive: true, mode: DIR_MODE });
+	} catch (error) {
+		const code = (error as NodeJS.ErrnoException).code;
+		if (code !== "EEXIST") return `cannot be created: ${code ?? (error as Error).message}`;
+	}
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(dir);
+	} catch (error) {
+		return `cannot be read: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`;
+	}
+	// Another user can create the dir or link first in a shared root, then replace the socket.
+	if (stat.isSymbolicLink()) return "is a symlink";
+	if (!stat.isDirectory()) return "is not a directory";
+	const uid = process.getuid?.();
+	if (uid !== undefined && stat.uid !== uid) return `is owned by uid ${stat.uid}`;
+	if ((stat.mode & 0o077) !== 0) {
+		try {
+			chmodSync(dir, DIR_MODE);
+		} catch {
+			return "cannot be made private";
+		}
+	}
+	return undefined;
+}
+
+/** The bus socks dir, then `pi-bus-<uid>` under each fallback root. A path that is too long can never bind. */
+export function socketPathFor(
+	instanceId: string,
+	dirs: BusDirs,
+	suffix = "",
+	fallbackRoots: readonly string[] = [tmpdir(), "/tmp"],
+): string {
 	// The full id, not a prefix: a prefix collision would let a stale record authorize deleting a live listener.
 	const leaf = `${fullId(instanceId)}${suffix}.sock`;
 	const preferred = join(dirs.socks, leaf);
-	if (Buffer.byteLength(preferred, "utf8") <= MAX_SOCK_PATH_BYTES) return preferred;
-	const fallbackDir = join(tmpdir(), `pi-bus-${userInfo().uid}`);
-	mkdirSync(fallbackDir, { recursive: true, mode: DIR_MODE });
-	return join(fallbackDir, leaf);
+	const fits = (path: string) => Buffer.byteLength(path, "utf8") <= MAX_SOCK_PATH_BYTES;
+	if (fits(preferred)) return preferred;
+	const rejected: string[] = [];
+	for (const root of fallbackRoots) {
+		const fallbackDir = join(root, `pi-bus-${userInfo().uid}`);
+		const path = join(fallbackDir, leaf);
+		if (!fits(path)) continue;
+		const problem = fallbackDirProblem(fallbackDir);
+		if (!problem) return path;
+		rejected.push(`${fallbackDir} ${problem}`);
+	}
+	if (rejected.length > 0) throw new Error(`no usable bus socket dir: ${rejected.join("; ")}`);
+	throw new Error(`bus socket path is too long: ${preferred}`);
 }
 
 function peerPathFor(instanceId: string, dirs: BusDirs): string {
