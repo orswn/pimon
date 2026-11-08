@@ -57,9 +57,9 @@ describe("continuation text", () => {
 	it("carries a rejection hint when given", () => {
 		expect(continuationText(record, "rejected: no output")).toContain("no output");
 	});
-	it("tells the model how a run may end", () => {
-		expect(continuationText(record)).toContain(
-			"To wait for external work, start it, then set a timer for when it should be done. A run that ends with no armed timer gets a continuation at once.",
+	it("leaves the timer rule to the goal section", () => {
+		expect(continuationText(record)).toBe(
+			"Goal continuation 1.\nKeep working toward the active goal. Call goal_done when the condition is provably met.",
 		);
 	});
 });

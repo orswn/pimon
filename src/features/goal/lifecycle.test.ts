@@ -13,7 +13,7 @@ const types = (input: LifecycleInput, state: Lifecycle) => step(state, input, T0
 const settleInput = (timerArmed = false) => ({ type: "before-settle", outcome: "completed", timerArmed }) as const;
 
 describe("before-settle transitions", () => {
-	it("continues an active goal without a timer and tells the model to set one", () => {
+	it("continues an active goal without a timer", () => {
 		const result = step(at(active, { worked: true }), settleInput(), T0 + 1);
 		expect(result.state.cycle.continued).toBe(true);
 		expect(result.effects).toEqual([
@@ -23,11 +23,6 @@ describe("before-settle transitions", () => {
 				details: { goal: "g1", generation: 1 },
 			},
 		]);
-		expect(result.effects[0]).toMatchObject({
-			text: expect.stringContaining(
-				"To wait for external work, start it, then set a timer for when it should be done. A run that ends with no armed timer gets a continuation at once.",
-			) as string,
-		});
 	});
 	it("lets the run settle while a timer is armed, with no continuation and no record write", () => {
 		const state = at(active, { worked: true });

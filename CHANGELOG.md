@@ -12,6 +12,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - Unknown `statusline` and `vi` options are an error that turns the feature off, like the options of other features. The message names the unknown option.
 - A bus digest shows a subject only when it differs from the thread title.
+- The goal continuation no longer repeats the timer rule of the goal section.
 
 ## [0.12.1] - 2026-11-08
 
