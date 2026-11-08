@@ -483,6 +483,134 @@ describe("bus feature", () => {
 		expect(typed).toEqual([{}]);
 	});
 
+	async function busTool(h: Harness, calls: Parameters<typeof fauxToolCall>[1][]): Promise<string[]> {
+		const before = toolText(h).length;
+		h.respond([
+			...calls.map((call) => fauxAssistantMessage(fauxToolCall("pi_bus", call), { stopReason: "toolUse" })),
+			fauxAssistantMessage(fauxText("ok")),
+		]);
+		await h.session.prompt("use the bus");
+		return h.session.messages
+			.filter((message) => message.role === "toolResult")
+			.slice(before)
+			.map((message) =>
+				((message as { content: { type: string; text?: string }[] }).content ?? [])
+					.map((part) => part.text ?? "")
+					.join(""),
+			);
+	}
+
+	async function busCommand(h: Harness, command: string): Promise<string> {
+		await h.session.prompt(command);
+		return h.notifications.at(-1)?.message ?? "";
+	}
+
+	async function statusLine(h: Harness): Promise<string | undefined> {
+		busService().resolve("all");
+		return (await busCommand(h, "/bus")).split("\n")[0];
+	}
+
+	const hex = (id: string) => id.replace(/-/g, "").slice(0, 12);
+
+	it("lists the other peers with their owner and role", async () => {
+		const h = await start();
+		const [alone] = await busTool(h, [{ action: "peers" }]);
+		expect(alone).toBe("No other pi instances are on the bus.");
+		const peer = await startPeer("alpha", { role: "reviewer" });
+		const [listed] = await busTool(h, [{ action: "peers" }]);
+		expect(listed?.split("\n")).toHaveLength(1);
+		expect(listed).toMatch(new RegExp(`^alpha owner:${hex(peer.owner)} \\w+ role=reviewer up=\\S+ cwd=`));
+	});
+
+	it("probes a matching peer and reports a selector with no match", async () => {
+		const h = await start();
+		const peer = await startPeer("alpha");
+		const [found, none] = await busTool(h, [
+			{ action: "probe", target: "name:alpha" },
+			{ action: "probe", target: "name:nobody" },
+		]);
+		expect(found).toMatch(new RegExp(`^alpha \\(id:${hex(peer.instanceId)}\\) alive .*rtt=\\d+ms`));
+		expect(found?.split("\n")).toHaveLength(1);
+		expect(none).toBe("Nothing matches name:nobody.");
+	});
+
+	it("reads one message by messageId and a thread by threadId, and marks them read", async () => {
+		const h = await start({ ui: {} });
+		const peer = await startPeer("writer");
+		const self = `id:${busService().instanceId}`;
+		const first = await peer.send(self, { body: "first of thread", kind: "note", wake: "never" });
+		const second = await peer.send(self, {
+			body: "second of thread",
+			kind: "note",
+			wake: "never",
+			threadId: first.envelope.threadId,
+		});
+		const single = await peer.send(self, { body: "alone", kind: "status", subject: "solo", wake: "never" });
+		expect(await statusLine(h)).toBe("bus: 1 peer, 3 unread");
+
+		const [byId] = await busTool(h, [{ action: "read", messageId: hex(single.envelope.id) }]);
+		expect(byId).toBe(
+			[
+				`messageId=${hex(single.envelope.id)} threadId=${hex(single.envelope.threadId)}`,
+				`from=writer (owner:${hex(peer.owner)}) to=${single.envelope.to}`,
+				`kind=status wake=never at=${new Date(single.envelope.createdAt).toISOString()}`,
+				"subject: solo",
+				"alone",
+			].join("\n"),
+		);
+		expect(await statusLine(h)).toBe("bus: 1 peer, 2 unread");
+
+		const [byThread] = await busTool(h, [{ action: "read", threadId: hex(first.envelope.threadId) }]);
+		const parts = byThread?.split("\n\n---\n\n") ?? [];
+		expect(parts).toHaveLength(2);
+		expect(parts[0]).toContain(`messageId=${hex(first.envelope.id)} threadId=${hex(first.envelope.threadId)}`);
+		expect(parts[0]?.endsWith("\nfirst of thread")).toBe(true);
+		expect(parts[1]).toContain(`messageId=${hex(second.envelope.id)} threadId=${hex(first.envelope.threadId)}`);
+		expect(parts[1]?.endsWith("\nsecond of thread")).toBe(true);
+		expect(await statusLine(h)).toBe("bus: 1 peer");
+		expect(h.requests.length).toBe(4);
+	});
+
+	it("subscribes to a topic, receives a topic message, and unsubscribes", async () => {
+		const h = await start();
+		const peer = await startPeer("broadcaster");
+		const [subscribed] = await busTool(h, [{ action: "subscribe", topic: "build" }]);
+		expect(subscribed).toBe("Topics: build");
+		await until(() => peer.refreshPeers().some((record) => record.topics?.includes("build") === true));
+		const sent = await peer.send("topic:build", { body: "built", kind: "event", wake: "never" });
+		expect(sent.delivered.map((record) => record.instanceId)).toEqual([busService().instanceId]);
+
+		const [unsubscribed] = await busTool(h, [{ action: "unsubscribe", topic: "build" }]);
+		expect(unsubscribed).toBe("Topics: none");
+		await until(() => !peer.refreshPeers().some((record) => record.topics?.includes("build") === true));
+		await expect(peer.send("topic:build", { body: "again", kind: "event", wake: "never" })).rejects.toThrow(
+			"no live peer matches topic:build",
+		);
+	});
+
+	it("shows status and doctor output through /bus and /bus-doctor", async () => {
+		const h = await start({ ui: {} });
+		await startPeer("neighbor");
+		const node = busService();
+		const me = `${node.name} (owner:${hex(node.owner)}, id:${hex(node.instanceId)})`;
+		node.resolve("all");
+		const status = (await busCommand(h, "/bus")).split("\n");
+		expect(status.slice(0, 2)).toEqual(["bus: 1 peer", `me: ${me}`]);
+		expect(status[2]).toBe(`labels: cwd=${h.cwd}`);
+		expect(status[3]).toMatch(/^socket: \S+/);
+
+		const doctor = (await busCommand(h, "/bus-doctor")).split("\n");
+		expect(doctor[0]).toBe(`identity: ${node.name} owner:${hex(node.owner)} id:${hex(node.instanceId)}`);
+		expect(doctor.slice(2)).toEqual([
+			"own presence file visible: yes",
+			"peers: 2 total, 0 blocked",
+			"duplicate names: none",
+			"unreachable: none",
+			"wake policy: all",
+		]);
+		expect(h.requests).toHaveLength(0);
+	});
+
 	it("leaves no presence after shutdown", async () => {
 		const h = await start();
 		const peer = await startPeer("watcher");
