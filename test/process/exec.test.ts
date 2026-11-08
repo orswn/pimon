@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vite-plus/test";
-import { runProcess, terminateAll } from "../../src/core/exec.ts";
+import { createProcessRunner } from "../../src/core/exec.ts";
+
+const { run: runProcess } = createProcessRunner();
 
 const marker = join(tmpdir(), `pimon-exec-orphan-${process.pid}`);
 const grandchild = `( sleep 2; echo alive > ${marker} ) & echo SHELL=$$; sleep 30`;
@@ -85,10 +87,24 @@ describe("runProcess cancellation reaches the process tree", () => {
 	});
 
 	it("terminateAll kills a running group", async () => {
-		void runProcess("bash", ["-c", grandchild], { killGraceMs: 200 });
+		const runner = createProcessRunner();
+		void runner.run("bash", ["-c", grandchild], { killGraceMs: 200 });
 		await sleep(400);
-		terminateAll();
+		runner.terminateAll();
 		await sleep(2_600);
 		expect(existsSync(marker)).toBe(false);
+	});
+
+	it("terminateAll of one runner does not kill a group started by another runner", async () => {
+		const owner = createProcessRunner();
+		const other = createProcessRunner();
+		const controller = new AbortController();
+		const pending = owner.run("bash", ["-c", grandchild], { signal: controller.signal, killGraceMs: 200 });
+		await sleep(400);
+		other.terminateAll();
+		await sleep(2_600);
+		expect(existsSync(marker)).toBe(true);
+		controller.abort();
+		expect((await pending).failed).toBe("aborted");
 	});
 });

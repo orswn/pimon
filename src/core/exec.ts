@@ -28,9 +28,6 @@ const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const DEFAULT_KILL_GRACE_MS = 2_000;
 const GROUPS = process.platform !== "win32";
 
-/** Live groups, so a session shutdown does not leave a verification suite running. */
-const live = new Set<number>();
-
 function signalGroup(pid: number, signal: NodeJS.Signals): void {
 	try {
 		if (GROUPS) process.kill(-pid, signal);
@@ -40,17 +37,28 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
 	}
 }
 
-/** Kill every process group this module started. Called on session shutdown. */
-export function terminateAll(): void {
-	for (const pid of live) {
-		signalGroup(pid, "SIGTERM");
-		signalGroup(pid, "SIGKILL");
-	}
-	live.clear();
+export interface ProcessRunner {
+	run: ExecFn;
+	/** Kill every process group this runner started. Groups of other runners are not touched. */
+	terminateAll(): void;
 }
 
-export const runProcess: ExecFn = (command, args, options) =>
-	new Promise((resolve) => {
+export function createProcessRunner(): ProcessRunner {
+	const live = new Set<number>();
+	return {
+		run: (command, args, options) => runProcess(live, command, args, options),
+		terminateAll() {
+			for (const pid of live) {
+				signalGroup(pid, "SIGTERM");
+				signalGroup(pid, "SIGKILL");
+			}
+			live.clear();
+		},
+	};
+}
+
+function runProcess(live: Set<number>, command: string, args: string[], options?: ExecOptions): Promise<ExecResult> {
+	return new Promise((resolve) => {
 		let child: ReturnType<typeof spawn>;
 		try {
 			child = spawn(command, args, {
@@ -169,3 +177,4 @@ export const runProcess: ExecFn = (command, args, options) =>
 			finish({ code, stdout: out, stderr: err });
 		});
 	});
+}
