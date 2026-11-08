@@ -7,6 +7,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 ### Changed
 
 - The statusline context segment shows tokens against the compaction threshold, not the model context window.
+- The `notify` result names phones by count, not by a device id.
 
 ### Fixed
 

@@ -75,7 +75,7 @@ export function createNotifier(options: NotifierOptions): NotifyService {
 	};
 
 	const outcomeLabel = (result: ExecResult) =>
-		result.failed && result.code === -1 && result.stderr ? result.stderr.split("\n")[0] : String(result.code);
+		result.failed && result.code === -1 && result.stderr ? (result.stderr.split("\n")[0] ?? "") : String(result.code);
 
 	async function desktop(urgency: string, heading: string, body: string, signal?: AbortSignal): Promise<Channel> {
 		const result = await run(
@@ -101,18 +101,18 @@ export function createNotifier(options: NotifierOptions): NotifyService {
 			.map((line) => line.trim())
 			.filter((line) => line.length >= 4 && !/\s/.test(line));
 		if (ids.length === 0) return { delivered: [], failed: ["no-reachable-device"] };
-		const pings = await Promise.all(
-			ids.map(async (id) => ({
-				id: id.slice(0, 8),
-				result: await run("kdeconnect-cli", ["-d", id, "--ping-msg", text], signal),
-			})),
-		);
-		const channel: Channel = { delivered: [], failed: [] };
-		for (const { id, result } of pings) {
-			if (result.code === 0 && !result.failed) channel.delivered.push(id);
-			else channel.failed.push(`${id}(${outcomeLabel(result)})`);
+		const results = await Promise.all(ids.map((id) => run("kdeconnect-cli", ["-d", id, "--ping-msg", text], signal)));
+		const delivered = results.filter((result) => result.code === 0 && !result.failed).length;
+		const causes = new Map<string, number>();
+		for (const result of results) {
+			if (result.code === 0 && !result.failed) continue;
+			const cause = outcomeLabel(result);
+			causes.set(cause, (causes.get(cause) ?? 0) + 1);
 		}
-		return channel;
+		return {
+			delivered: delivered > 0 ? [phoneCount(delivered)] : [],
+			failed: [...causes].map(([cause, count]) => `${phoneCount(count)}(${cause})`),
+		};
 	}
 
 	async function notify(request: NotifyRequest): Promise<NotifyOutcome> {
@@ -159,6 +159,11 @@ export function createNotifier(options: NotifierOptions): NotifyService {
 	}
 
 	return { notify };
+}
+
+// A device id means nothing to the model, so phones are named by count.
+function phoneCount(count: number): string {
+	return count === 1 ? "phone" : `${count} phones`;
 }
 
 export function formatOutcome(outcome: NotifyOutcome): string {

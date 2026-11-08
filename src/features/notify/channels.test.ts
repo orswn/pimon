@@ -33,7 +33,7 @@ describe("notifier", () => {
 			detail: "which database",
 		});
 		expect(outcome.ok).toBe(true);
-		expect(outcome.delivered).toHaveLength(3);
+		expect(outcome.delivered).toEqual(["desktop", "2 phones"]);
 		expect(lines().some((call) => call.includes("-u critical"))).toBe(true);
 		expect(lines().some((call) => call.includes("which database"))).toBe(true);
 		expect(lines().filter((call) => call.includes("--ping-msg"))).toHaveLength(2);
@@ -145,6 +145,40 @@ describe("notification failures are retryable", () => {
 		expect((await notifier.notify({ kind: "paused", message: "deadline" })).ok).toBe(true);
 		clock += 100;
 		expect((await notifier.notify({ kind: "paused", message: "deadline" })).suppressed).toBe("duplicate");
+	});
+});
+
+describe("phone channel names", () => {
+	const twoIds = "aaaaaaaa_1111_2222_3333_444444444444\nbbbbbbbb_5555_6666_7777_888888888888\n";
+	const pingResults = (results: ExecResult[]): ExecFn => {
+		let index = 0;
+		return async (command, args) => {
+			if (command === "kdeconnect-cli" && args[0] === "-a") return { code: 0, stdout: twoIds, stderr: "" };
+			if (command === "kdeconnect-cli") return results[index++] ?? ok;
+			return ok;
+		};
+	};
+
+	it("names phones by count, never by device id", async () => {
+		const outcome = await createNotifier({ exec: pingResults([ok, ok]), now: () => T0 }).notify({
+			kind: "info",
+			message: "x",
+		});
+		expect(formatOutcome(outcome)).toBe("Notified via desktop, 2 phones.");
+	});
+
+	it("names a failed phone with its cause and groups phones with the same cause", async () => {
+		const failed: ExecResult = { code: 1, stdout: "", stderr: "" };
+		const one = await createNotifier({ exec: pingResults([ok, failed]), now: () => T0 }).notify({
+			kind: "info",
+			message: "x",
+		});
+		expect(formatOutcome(one)).toBe("Notified via desktop, phone (failed: phone(1)).");
+		const both = await createNotifier({ exec: pingResults([failed, failed]), now: () => T0 }).notify({
+			kind: "info",
+			message: "x",
+		});
+		expect(formatOutcome(both)).toBe("Notified via desktop (failed: 2 phones(1)).");
 	});
 });
 
