@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-09
+
 ### Added
 
 - The `goal_set` tool. The model creates, edits, pauses, resumes, or clears the goal, but only on a direct human message in the current run. A `/goal` text that points to earlier talk becomes a pending goal, and the model writes its objective. The human words stay on the record, and `/goal` shows them.
