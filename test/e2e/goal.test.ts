@@ -101,12 +101,12 @@ const files = (pi: Pi) =>
 		.sort();
 
 describe.concurrent("goal through a real pi", () => {
-	it("runs unattended and finishes on an accepted claim", async () => {
+	it("runs unattended and finishes on goal_done", async () => {
 		const pi = startPi("done");
 		const target = join(pi.work, "artifact.txt");
 		pi.send(`/goal create the file ${target} containing exactly the word READY, then verify it with cat`);
 		expect(await pi.waitFor(/Goal set/, 20_000)).toBe(true);
-		expect(await pi.waitFor(/Goal accepted|Goal achieved/, 180_000)).toBe(true);
+		expect(await pi.waitFor(/Goal done|Goal achieved/, 180_000)).toBe(true);
 		expect(existsSync(target) && readFileSync(target, "utf8")).toContain("READY");
 
 		pi.send("/goal");

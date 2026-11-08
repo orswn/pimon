@@ -48,6 +48,10 @@ describe("goal segment", () => {
 		expect(goalSegment(undefined, theme, NOW)).toBeUndefined();
 	});
 
+	it("shows waiting while an active goal waits for the next human message", () => {
+		expect(goalSegment({ state: "active", turns: 5, waiting: true }, theme, NOW)).toBe("goal 5 waiting");
+	});
+
 	it("ignores a turn limit field", () => {
 		expect(goalSegment({ state: "active", turns: 2, limit: 10 } as never, theme, NOW)).toBe("goal 2");
 	});

@@ -37,7 +37,7 @@ Optional file: `~/.pi/agent/pimon.json`.
   - A prompt section that needs only tools that are off is left out.
   - A value that is not `true` or `false` shows an error.
   - A name that no enabled feature registers shows a warning.
-  - A tool that is off but needed shows a warning: `pi_agents` needs `pi_bus`, `goal_done` needs `timer` and `notify`, the `goal` feature needs `goal_done`, and each codemode job tool needs its shell tool.
+  - A tool that is off but needed shows a warning: `pi_agents` needs `pi_bus`, `goal_done` needs `timer` and `notify`, `goal_set` needs `goal_done`, the `goal` feature needs `goal_done`, and each codemode job tool needs its shell tool.
 - A feature is off when a feature in its `Needs` list is off.
 - Run `/pimon` to see feature status, prompt sections, and diagnostics.
 
@@ -77,10 +77,10 @@ All features are on by default. The list is in load order.
 
 ### `goal`
 
-- Purpose: autonomous goals that end only after an independent check.
+- Purpose: autonomous goals that the human or the model sets. The model marks a goal done.
 - Needs: `notify`, `background`.
 - Options: none.
-- Tools: `goal_done`.
+- Tools: `goal_done`, `goal_set`.
 - Commands: `/goal`, `/goal-check`.
 - External commands: the goal check command, through `bash -c`.
 

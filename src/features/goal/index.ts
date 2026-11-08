@@ -1,8 +1,10 @@
+import { StringEnum } from "@earendil-works/pi-ai";
 import type { CustomMessageEntryDraft, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createProcessRunner, type ExecFn } from "../../core/exec.ts";
 import { defineFeature, type WakeMessage } from "../../core/feature.ts";
 import { checkOnlyCall, formatOutcome, type NotifyRequest } from "../notify/index.ts";
+import { closeAuthority, onInput, onUserMessage, openAuthority } from "./authority.ts";
 import { executeClaim } from "./claim.ts";
 import { handleGoalCommand } from "./command.ts";
 import {
@@ -11,52 +13,75 @@ import {
 	type Effect,
 	goalDetails,
 	initialLifecycle,
+	isWaiting,
 	type LifecycleInput,
-	START_MESSAGE,
 	step,
 } from "./lifecycle.ts";
-import { conditionChangedText } from "./policy.ts";
+import { checkCommandChangedText } from "./policy.ts";
 import { GOAL_PROMPT } from "./prompt.ts";
 import type { GoalSession } from "./session.ts";
-import { type GoalRecord, isActive, latestFromEntries, type PauseReason, setCheck } from "./state.ts";
+import { executeGoalSet, GOAL_SET_DESCRIPTION, type GoalSetParams, OBJECTIVE_DESCRIPTION } from "./set.ts";
+import {
+	copiedFromAnotherSession,
+	type GoalRecord,
+	isActive,
+	latestFromEntries,
+	type PauseReason,
+	type RecoverKind,
+	setCheck,
+} from "./state.ts";
 import { goalTemplateCompletions } from "./template.ts";
 
 export { typoVerb } from "./command.ts";
 
 const ENTRY_TYPE = "goal";
 const CLAIM_TOOL = "goal_done";
+const GOAL_SET_TOOL = "goal_set";
 const NO_TIMER_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
+const WAITING_NOTICE = "Goal still active. It continues after your next message. /goal pause stops it.";
+const PEER_WAITING_NOTICE = "Goal waiting: a peer interrupted the run. It continues after your next message.";
 
 const CLAIM_DESCRIPTION =
-	"Claim that the active goal's completion condition is met. An independent check runs before the claim is accepted. Must be the only tool call in its message.";
+	"Mark the active goal done. Call it only when the objective holds now. Must be the only tool call in its message.";
 
 export interface GoalStatePayload {
 	state?: GoalRecord["state"];
 	turns?: number;
 	/** Epoch ms of the earliest armed timer of this session. */
 	timerDueAt?: number;
+	/** Set while an active goal waits for the next human message after an interrupted run. */
+	waiting?: true;
 }
 
 declare module "../../core/events.ts" {
 	interface PimonEvents {
 		/** Sent on each change and at each session start. `{}` means no goal. */
-		"goal:state": { state?: string; turns?: number; timerDueAt?: number };
+		"goal:state": { state?: string; turns?: number; timerDueAt?: number; waiting?: true };
 	}
 }
 
 interface GoalFeatureOptions {
 	/** Runs check commands. Tests inject a recorder. */
 	exec?: ExecFn;
-	/** Upper bound of one model adjudication. Tests shorten it. */
-	modelTimeoutMs?: number;
 }
 
-/** Entry times have millisecond resolution, so a result that ties with the landing must still be excluded. */
-function evidenceStart(extensionCtx: ExtensionContext): number {
-	const branch = extensionCtx.sessionManager.getBranch();
-	const last = branch.at(-1) as { timestamp?: string } | undefined;
-	const lastTime = last?.timestamp ? Date.parse(last.timestamp) : Number.NaN;
-	return Number.isNaN(lastTime) ? Date.now() : Math.max(Date.now(), lastTime + 1);
+/**
+ * The in-memory goal state at the last shutdown. /reload keeps it, so turn and continuation counts
+ * and a wait survive. A restart derives the wait again from the armed timers.
+ */
+interface ReloadSlot {
+	sessionId: string | undefined;
+	waiting: string | undefined;
+	record: GoalRecord | undefined;
+}
+
+function messageText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((part): part is { type: "text"; text: string } => (part as { type?: string })?.type === "text")
+		.map((part) => part.text)
+		.join("\n");
 }
 
 function lastErrorMessage(extensionCtx: ExtensionContext): string | undefined {
@@ -76,7 +101,7 @@ function lastErrorMessage(extensionCtx: ExtensionContext): string | undefined {
 export function createGoalFeature(options: GoalFeatureOptions = {}) {
 	return defineFeature({
 		id: "goal",
-		description: "Autonomous goals: unattended work toward a condition, finished by an independent check",
+		description: "Autonomous goals that the human or the model sets. The model marks a goal done",
 		dependsOn: ["notify", "background"],
 		defaultEnabled: true,
 		setup(ctx) {
@@ -93,7 +118,15 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				operation: 0,
 				claimInFlight: false,
 				sessionEpoch: 0,
+				authority: openAuthority(),
 			};
+			const slot = ctx.reloadState<ReloadSlot>("session", 1, () => ({
+				sessionId: undefined,
+				waiting: undefined,
+				record: undefined,
+			}));
+			// Set when a bus peer interrupts the current run, so its wait also reaches the phone.
+			let peerInterrupted = false;
 			let ui: ExtensionContext | undefined;
 
 			const notice = (message: string, level: "info" | "warning" | "error") => {
@@ -123,6 +156,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				const payload: GoalStatePayload = record ? { state: record.state, turns: record.turns } : {};
 				const due = sessionId === undefined ? [] : timers.armed(sessionId).map((timer) => timer.dueAt);
 				if (record && due.length > 0) payload.timerDueAt = Math.min(...due);
+				if (isWaiting(session.life)) payload.waiting = true;
 				ctx.events.emit("goal:state", payload);
 			};
 
@@ -151,7 +185,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			ctx.events.on("timers:changed", (payload) => {
 				if (!live || payload.sessionId !== session.sessionId) return;
 				publish();
-				if (releasing || !isActive(session.life.record) || timerArmed() || !isIdle()) return;
+				if (releasing || !isActive(session.life.record) || isWaiting(session.life) || timerArmed() || !isIdle()) return;
 				notice(NO_TIMER_WARNING, "warning");
 			});
 
@@ -169,7 +203,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			const save = (next: GoalRecord): boolean => {
 				if (!append(next)) return false;
 				const previous = session.life.record;
-				session.life = { ...session.life, record: next };
+				session.life = { ...session.life, record: next, waiting: isActive(next) ? session.life.waiting : undefined };
 				releaseTimers(previous, next);
 				publish();
 				return true;
@@ -192,19 +226,20 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				session.cancel?.abort();
 				session.cancel = undefined;
 				notice(`Goal paused: ${reason}. ${detail}`, "warning");
-				if (phone) report({ kind: "paused", title: "pi goal: paused", message: `Goal paused: ${reason}`, detail });
+				if (phone) report({ kind: "paused", title: "pi goal: paused", message: reason, detail });
 			};
 
 			/** Runs one reducer step and its effects. Returns the drafts for a before-settle boundary. */
 			const run = (input: LifecycleInput, extensionCtx?: ExtensionContext): CustomMessageEntryDraft[] => {
 				if (extensionCtx) see(extensionCtx);
 				const previous = session.life.record;
+				const wasWaiting = session.life.waiting;
 				const result = step(session.life, input, Date.now());
 				session.life = result.state;
 				releaseTimers(previous, session.life.record);
 				const drafts: CustomMessageEntryDraft[] = [];
 				for (const effect of result.effects) apply(effect, drafts);
-				if (session.life.record !== previous) publish();
+				if (session.life.record !== previous || session.life.waiting !== wasWaiting) publish();
 				return drafts;
 			};
 
@@ -227,6 +262,14 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 					case "stopped":
 						announceStop(effect.reason, effect.detail, effect.phone);
 						return;
+					case "waiting":
+						if (!peerInterrupted) {
+							notice(WAITING_NOTICE, "info");
+							return;
+						}
+						notice(PEER_WAITING_NOTICE, "info");
+						report({ kind: "info", message: PEER_WAITING_NOTICE });
+						return;
 					case "condition":
 						// TODO(okka): the reminder lands one turn late after an in-run threshold compaction.
 						pi.sendMessage(
@@ -237,12 +280,27 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				}
 			};
 
-			const reconstruct = (extensionCtx: ExtensionContext, kind: "restart" | "navigation") => {
+			const reconstruct = (extensionCtx: ExtensionContext, kind: RecoverKind) => {
 				session.cancel?.abort();
 				session.cancel = undefined;
+				session.authority = closeAuthority();
 				see(extensionCtx);
-				const found = latestFromEntries(extensionCtx.sessionManager.getBranch(), ENTRY_TYPE);
-				run({ type: "recover", found, kind, timerArmed: timerArmed() }, extensionCtx);
+				peerInterrupted = false;
+				const branch = extensionCtx.sessionManager.getBranch();
+				const saved = latestFromEntries(branch, ENTRY_TYPE);
+				const kept = kind === "reload" && slot.sessionId === session.sessionId ? slot.record : undefined;
+				const sameState =
+					kept !== undefined &&
+					saved !== undefined &&
+					kept.id === saved.id &&
+					kept.generation === saved.generation &&
+					kept.state === saved.state;
+				const found = sameState ? kept : saved;
+				const waiting = sameState && slot.waiting === saved.id;
+				const copied =
+					kind === "restart" &&
+					copiedFromAnotherSession(branch, extensionCtx.sessionManager.getHeader()?.timestamp, ENTRY_TYPE);
+				run({ type: "recover", found, kind: copied ? "fork" : kind, timerArmed: timerArmed(), waiting }, extensionCtx);
 				publish();
 			};
 
@@ -255,14 +313,22 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				run({ type: "blocked", message: payload.message, detail: payload.detail });
 			});
 
-			ctx.onSessionStart((_event, extensionCtx) => {
+			ctx.onSessionStart((event, extensionCtx) => {
 				live = true;
-				reconstruct(extensionCtx, "restart");
+				const kind = event.reason === "reload" || event.reason === "fork" ? event.reason : "restart";
+				reconstruct(extensionCtx, kind);
 			});
 			pi.on("session_tree", (_event, extensionCtx) => {
 				if (live) reconstruct(extensionCtx, "navigation");
 			});
+			ctx.events.on("bus:interrupt", () => {
+				if (live && isActive(session.life.record) && !isIdle()) peerInterrupted = true;
+			});
+
 			ctx.onSessionShutdown(() => {
+				slot.sessionId = session.sessionId;
+				slot.waiting = session.life.waiting;
+				slot.record = session.life.record;
 				session.sessionEpoch++;
 				live = false;
 				session.cancel?.abort();
@@ -276,14 +342,27 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				run({ type: "turn-start" });
 			});
 
-			pi.on("message_start", (event, extensionCtx) => {
+			pi.on("input", (event) => {
 				if (!live) return undefined;
-				const message = event.message as { role?: string; customType?: string; details?: unknown };
-				if (message.role === "custom" && message.customType === START_MESSAGE) {
-					const goalId = (message.details as { goal?: unknown } | undefined)?.goal;
-					if (typeof goalId === "string")
-						run({ type: "start-landed", goal: goalId, at: evidenceStart(extensionCtx) }, extensionCtx);
+				session.authority = onInput(session.authority, event.source, event.streamingBehavior);
+				return undefined;
+			});
+
+			pi.on("message_start", (event) => {
+				if (!live) return undefined;
+				const message = event.message as { role?: string; customType?: string; content?: unknown; details?: unknown };
+				if (message.role === "user") {
+					const human = session.authority.queue[0] === true;
+					session.authority = onUserMessage(session.authority, messageText(message.content));
+					if (human) run({ type: "woken" });
+					return undefined;
 				}
+				const record = session.life.record;
+				if (message.role === "custom" && message.customType === "timer" && isActive(record)) {
+					const createdAt = (message.details as { createdAt?: unknown } | undefined)?.createdAt;
+					if (typeof createdAt === "number" && createdAt >= record.startedAt) run({ type: "woken" });
+				}
+				return undefined;
 			});
 
 			pi.on("turn_end", (event) => {
@@ -294,6 +373,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 
 			pi.on("agent_before_settle", (event, extensionCtx) => {
 				if (!live) return undefined;
+				session.authority = closeAuthority();
 				const errorMessage = event.outcome === "error" ? lastErrorMessage(extensionCtx) : undefined;
 				see(extensionCtx);
 				const drafts = run(
@@ -306,8 +386,10 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 
 			pi.on("agent_settled", (event, extensionCtx) => {
 				if (!live) return undefined;
+				session.authority = closeAuthority();
 				see(extensionCtx);
 				run({ type: "settled", aborted: event.aborted, timerArmed: timerArmed() }, extensionCtx);
+				peerInterrupted = false;
 			});
 
 			pi.on("session_compact", (_event, extensionCtx) => {
@@ -334,8 +416,12 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				session,
 				timers,
 				exec,
-				modelTimeoutMs: options.modelTimeoutMs,
 				commands: () => pi.getCommands(),
+				canDefineObjective: () => pi.getActiveTools().includes(GOAL_SET_TOOL),
+				woken: () => {
+					run({ type: "woken" });
+				},
+				waiting: () => isWaiting(session.life),
 				see,
 				save,
 				wake,
@@ -353,12 +439,25 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				exposure: "model-only",
 				parameters: Type.Object({
 					evidence: Type.String({
-						description:
-							"What in this conversation proves the condition holds: which commands ran and what they output",
+						description: "Which commands ran in this goal and what they showed, proving the objective holds now",
 					}),
 				}),
 				execute: (_id, params, signal, onUpdate, extensionCtx) =>
 					executeClaim(host, params, signal, onUpdate, extensionCtx),
+			});
+
+			pi.registerTool({
+				name: GOAL_SET_TOOL,
+				label: "Goal Set",
+				description: GOAL_SET_DESCRIPTION,
+				executionMode: "sequential",
+				exposure: "model-only",
+				parameters: Type.Object({
+					action: StringEnum(["create", "edit", "pause", "resume", "clear"] as const),
+					objective: Type.Optional(Type.String({ description: OBJECTIVE_DESCRIPTION })),
+				}),
+				execute: async (_id, params, _signal, _onUpdate, extensionCtx) =>
+					executeGoalSet(host, params as GoalSetParams, extensionCtx),
 			});
 
 			pi.registerCommand("goal", {
@@ -386,7 +485,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 						pi.sendMessage(
 							{
 								customType: CONDITION_MESSAGE,
-								content: conditionChangedText(updated),
+								content: checkCommandChangedText(updated),
 								display: true,
 								details: goalDetails(updated),
 							},

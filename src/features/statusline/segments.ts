@@ -43,6 +43,8 @@ export interface GoalIndicator {
 	turns?: number | undefined;
 	/** Epoch ms of the goal's wake timer. */
 	timerDueAt?: number | undefined;
+	/** The goal waits for the next human message. */
+	waiting?: boolean | undefined;
 }
 
 function clock(epochMs: number): string {
@@ -55,7 +57,8 @@ export function goalSegment(goal: GoalIndicator | undefined, theme: ThemeLike, n
 	if (goal?.state === "active") {
 		const due = goal.timerDueAt;
 		const wake = typeof due === "number" && due > now ? ` wake ${clock(due)}` : "";
-		return theme.fg("accent", `goal ${goal.turns ?? 0}${wake}`);
+		const waiting = goal.waiting ? " waiting" : "";
+		return theme.fg("accent", `goal ${goal.turns ?? 0}${waiting}${wake}`);
 	}
 	if (goal?.state === "paused") return theme.fg("error", "goal paused");
 	return undefined;

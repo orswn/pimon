@@ -5,11 +5,13 @@ import { createGoal, type GoalRecord, pause } from "./state.ts";
 const T0 = 1_700_000_000_000;
 const active = createGoal({ condition: "ship it", now: T0, id: "g1" });
 const paused = pause(active, "user-input", "x", T0);
-const at = (record: GoalRecord | undefined, cycle: Partial<Cycle> = {}): Lifecycle => ({
+const at = (record: GoalRecord | undefined, cycle: Partial<Cycle> = {}, waiting?: string): Lifecycle => ({
 	record,
 	cycle: { ...initialLifecycle().cycle, ...cycle },
+	waiting,
 });
 const types = (input: LifecycleInput, state: Lifecycle) => step(state, input, T0 + 1).effects.map((e) => e.type);
+const withWork = (state: Lifecycle): Lifecycle => ({ ...state, cycle: { ...state.cycle, worked: true } });
 const settleInput = (timerArmed = false) => ({ type: "before-settle", outcome: "completed", timerArmed }) as const;
 
 describe("before-settle transitions", () => {
@@ -23,6 +25,13 @@ describe("before-settle transitions", () => {
 				details: { goal: "g1", generation: 1 },
 			},
 		]);
+	});
+	it("numbers continuations per goal, not per turn, and keeps the count in the record", () => {
+		const first = step(at({ ...active, turns: 5 }, { worked: true }), settleInput(), T0 + 1);
+		expect(first.state.record?.continuations).toBe(1);
+		const second = step(withWork(first.state), settleInput(), T0 + 2);
+		expect(second.effects[0]).toMatchObject({ text: expect.stringContaining("Goal continuation 2.") as string });
+		expect(second.state.record?.continuations).toBe(2);
 	});
 	it("lets the run settle while a timer is armed, with no continuation and no record write", () => {
 		const state = at(active, { worked: true });
@@ -70,7 +79,7 @@ describe("before-settle transitions", () => {
 		const settled = (aborted: boolean) =>
 			step(result.state, { type: "settled", aborted, timerArmed: false }, T0 + 2).state.record?.pauseReason;
 		expect(settled(false)).toBe("run-lost");
-		expect(settled(true)).toBe("user-input");
+		expect(step(result.state, { type: "settled", aborted: true, timerArmed: false }, T0 + 2).state.waiting).toBe("g1");
 	});
 });
 
@@ -110,10 +119,30 @@ describe("stall cap", () => {
 
 describe("settled transitions", () => {
 	const settled = (aborted: boolean, timerArmed = false) => ({ type: "settled", aborted, timerArmed }) as const;
-	it("pauses on an aborted run with user-input, also while a timer is armed", () => {
-		const result = step(at(active), settled(true, true), T0 + 1);
-		expect(result.state.record?.pauseReason).toBe("user-input");
-		expect(result.effects.at(-1)).toMatchObject({ type: "stopped", reason: "user-input", phone: true });
+	it("keeps the goal active and waiting after an aborted run, with no record write", () => {
+		const result = step(at(active, { worked: true }), settled(true, true), T0 + 1);
+		expect(result.state.record).toBe(active);
+		expect(result.state.waiting).toBe("g1");
+		expect(result.effects).toEqual([{ type: "waiting" }]);
+	});
+	it("a waiting goal gets no continuation, counts no stall, and is not lost at settle", () => {
+		const waiting = at(active, { worked: false, stalls: 2 }, "g1");
+		const boundary = step(waiting, settleInput(), T0);
+		expect(boundary.effects).toEqual([]);
+		expect(boundary.state.cycle).toMatchObject({ continued: false, stalls: 2 });
+		const after = step(boundary.state, settled(false), T0 + 1);
+		expect(after.effects).toEqual([]);
+		expect(after.state.record).toBe(active);
+		expect(after.state.waiting).toBe("g1");
+	});
+	it("a wake ends the wait, so the next run end continues", () => {
+		const woken = step(at(active, {}, "g1"), { type: "woken" }, T0).state;
+		expect(woken.waiting).toBeUndefined();
+		expect(step(woken, settleInput(), T0).effects.map((e) => e.type)).toEqual(["continue"]);
+	});
+	it("a wait of an earlier goal does not hold a new goal", () => {
+		const result = step(at(active, { worked: true }, "old-goal"), settleInput(), T0);
+		expect(result.effects.map((e) => e.type)).toEqual(["continue"]);
 	});
 	it("pauses an active goal without a timer as run-lost", () => {
 		const result = step(at(active), settled(false), T0 + 1);
@@ -135,6 +164,7 @@ describe("settled transitions", () => {
 	])("leaves %s alone", (_name, state) => {
 		expect(step(state, settled(false), T0).effects).toEqual([]);
 		expect(step(state, settled(true), T0).state.record).toBe(state.record);
+		expect(step(state, settled(true), T0).state.waiting).toBeUndefined();
 	});
 	it("resets the run flags and keeps the stall count", () => {
 		const result = step(
@@ -191,48 +221,54 @@ describe("run, terminal, blocked, turn, and compaction transitions", () => {
 });
 
 describe("recover transitions", () => {
-	const recoverInput = (
-		found: GoalRecord | undefined,
-		timerArmed: boolean,
-		kind: "restart" | "navigation" = "restart",
-	) => ({ type: "recover", found, kind, timerArmed }) as const;
+	type Kind = "restart" | "reload" | "navigation" | "fork";
+	const recoverInput = (found: GoalRecord | undefined, kind: Kind, timerArmed = false, waiting = false) =>
+		({ type: "recover", found, kind, timerArmed, waiting }) as const;
 
-	it("keeps an active goal active when a timer of this session is armed in this process", () => {
-		const result = step(at(undefined), recoverInput(active, true), T0);
+	it("keeps an active goal active and not waiting while a timer of this session is armed", () => {
+		for (const kind of ["restart", "reload"] as const) {
+			const result = step(at(undefined), recoverInput(active, kind, true), T0);
+			expect(result.state.record).toBe(active);
+			expect(result.state.waiting).toBeUndefined();
+			expect(result.effects).toEqual([{ type: "remember", record: active }]);
+		}
+	});
+	it("makes an active goal without a timer wait on a restart, with one notice and no record write", () => {
+		const result = step(at(undefined), recoverInput(active, "restart"), T0);
 		expect(result.state.record).toBe(active);
+		expect(result.state.waiting).toBe("g1");
+		expect(result.effects).toEqual([{ type: "remember", record: active }, { type: "waiting" }]);
+	});
+	it("makes an active goal without a timer wait on a reload, with no notice", () => {
+		const result = step(at(undefined), recoverInput(active, "reload"), T0);
+		expect(result.state.waiting).toBe("g1");
 		expect(result.effects).toEqual([{ type: "remember", record: active }]);
 	});
-	it("pauses an active goal without a timer as wake-source-lost, with no phone ping", () => {
-		const result = step(at(undefined), recoverInput(active, false), T0);
-		expect(result.state.record).toMatchObject({
-			pauseReason: "wake-source-lost",
-			detail: "No timer is armed in this pi process.",
-		});
-		expect(result.effects.map((e) => e.type)).toEqual(["persist", "stopped"]);
-		expect(result.effects.at(-1)).toMatchObject({ phone: false });
+	it("keeps a goal that waited before a reload waiting, also with a timer", () => {
+		const result = step(at(undefined), recoverInput(active, "reload", true, true), T0);
+		expect(result.state.record).toBe(active);
+		expect(result.state.waiting).toBe("g1");
 	});
-	it("pauses an active goal on navigation even with a timer", () => {
-		expect(step(at(undefined), recoverInput(active, true, "navigation"), T0).state.record?.pauseReason).toBe(
-			"navigation",
-		);
+	it("pauses an active goal on navigation and in a fork, without a phone ping", () => {
+		const navigated = step(at(undefined), recoverInput(active, "navigation", true), T0);
+		expect(navigated.state.record?.pauseReason).toBe("navigation");
+		const forked = step(at(undefined), recoverInput(active, "fork", true), T0);
+		expect(forked.state.record?.pauseReason).toBe("fork");
+		expect(forked.state.waiting).toBeUndefined();
+		expect(forked.effects.map((e) => e.type)).toEqual(["persist", "stopped"]);
+		expect(forked.effects.at(-1)).toMatchObject({ phone: false });
 	});
 	it("loads a paused goal or no goal unchanged and resets the run flags", () => {
-		const result = step(at(active, { continued: true, stalls: 2 }), recoverInput(paused, false), T0);
+		const result = step(at(active, { continued: true, stalls: 2 }), recoverInput(paused, "restart"), T0);
 		expect(result.state).toEqual(initialLifecycle(paused));
-		expect(step(at(active), recoverInput(undefined, false), T0).state.record).toBeUndefined();
+		expect(step(at(active), recoverInput(undefined, "restart"), T0).state.record).toBeUndefined();
 	});
 });
 
-describe("start message landing", () => {
-	const fresh = { ...active, evidenceFrom: undefined };
-	it("stamps the evidence boundary of the matching goal once", () => {
-		const result = step(at(fresh), { type: "start-landed", goal: "g1", at: T0 + 9 }, T0 + 5);
-		expect(result.state.record?.evidenceFrom).toBe(T0 + 9);
-		expect(result.effects.map((e) => e.type)).toEqual(["persist"]);
-		expect(step(result.state, { type: "start-landed", goal: "g1", at: T0 + 20 }, T0 + 20).effects).toEqual([]);
-	});
-	it("ignores the start message of another goal or a paused goal", () => {
-		expect(types({ type: "start-landed", goal: "other", at: T0 }, at(fresh))).toEqual([]);
-		expect(types({ type: "start-landed", goal: "g1", at: T0 }, at({ ...paused, evidenceFrom: undefined }))).toEqual([]);
+describe("waiting ends when the goal leaves active", () => {
+	it("a stop clears the wait, so a later resume of the same goal is not waiting", () => {
+		const result = step(at(active, {}, "g1"), { type: "blocked", message: "needs a key" }, T0);
+		expect(result.state.record?.state).toBe("paused");
+		expect(result.state.waiting).toBeUndefined();
 	});
 });

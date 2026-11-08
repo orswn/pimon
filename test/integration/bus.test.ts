@@ -456,6 +456,29 @@ describe("bus feature", () => {
 		expect(h.requests).toHaveLength(0);
 	});
 
+	it("tells other features which peer interrupted this instance", async () => {
+		process.env["PI_BUS_CONTROL_TOKEN"] = "right";
+		const interrupts: unknown[] = [];
+		const listener = defineFeature({
+			id: "interrupt-listener",
+			description: "test feature that records bus interrupts",
+			defaultEnabled: true,
+			setup(ctx) {
+				ctx.events.on("bus:interrupt", (payload) => interrupts.push(payload));
+			},
+		});
+		await start({ features: [bus, capture, listener] });
+		const peer = await startPeer("boss");
+		await peer.send(`id:${busService().instanceId}`, {
+			body: "interrupt",
+			kind: "control",
+			wake: "now",
+			data: { token: "right" },
+		});
+		await until(() => interrupts.length > 0);
+		expect(interrupts).toEqual([{ from: "boss" }]);
+	});
+
 	it("settles the peer's pending question with a faux reply", async () => {
 		const h = await start();
 		const peer = await startPeer("asker");

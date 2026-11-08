@@ -8,6 +8,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { defineFeature } from "../../src/core/feature.ts";
 import { clearReloadState } from "../../src/core/reload-state.ts";
 import { ASKPASS_CLIENT, createAskSecret, REMOVED_OUTPUT } from "../../src/features/ask-secret/index.ts";
+import { background } from "../../src/features/background/index.ts";
+import { createGoalFeature } from "../../src/features/goal/index.ts";
+import { latestFromEntries } from "../../src/features/goal/state.ts";
+import { createNotifyFeature } from "../../src/features/notify/index.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
 
 const SECRET = "s3cr3t-value";
@@ -84,6 +88,23 @@ describe("ask-secret in a session", () => {
 		const request = JSON.stringify(harness.requests[0]);
 		expect(request).toContain("use $PI_SECRET_DB now");
 		expect(request).not.toContain(SECRET);
+		expect(JSON.stringify(harness.session.sessionManager.getEntries())).not.toContain(SECRET);
+	});
+
+	it("stores the handle, not the value, as the human request of a goal the model sets", async () => {
+		const quiet = async () => ({ code: 0, stdout: "", stderr: "" });
+		harness = await createHarness({
+			features: [background, createNotifyFeature({ exec: quiet }), createGoalFeature({ exec: quiet }), askSecret],
+		});
+		harness.respond([
+			call("goal_set", { action: "create", objective: "The deploy with the DB key is done." }),
+			call("notify", { kind: "blocked", message: "needs a decision" }),
+		]);
+		await harness.session.prompt(`keep going until it is deployed with [[secret DB:${SECRET}]]`);
+		await harness.waitForRequests(2);
+
+		const record = latestFromEntries(harness.session.sessionManager.getBranch());
+		expect(record?.condition).toBe("keep going until it is deployed with $PI_SECRET_DB");
 		expect(JSON.stringify(harness.session.sessionManager.getEntries())).not.toContain(SECRET);
 	});
 

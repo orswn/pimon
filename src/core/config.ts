@@ -56,6 +56,7 @@ export function loadConfigFile(agentDir: string): LoadedConfig {
 const TOOL_NEEDS: Readonly<Record<string, readonly string[]>> = {
 	pi_agents: ["pi_bus"],
 	goal_done: ["timer", "notify"],
+	goal_set: ["goal_done"],
 	background_codemode: ["background"],
 	monitor_codemode: ["monitor"],
 };

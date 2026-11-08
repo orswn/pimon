@@ -4,6 +4,17 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- The `goal_set` tool. The model creates, edits, pauses, resumes, or clears the goal, but only on a direct human message in the current run. A `/goal` text that points to earlier talk becomes a pending goal, and the model writes its objective. The human words stay on the record, and `/goal` shows them.
+
+### Changed
+
+- The model marks its own goal done. `goal_done` is accepted at once, and the model then writes a final message. The model check is gone. `/goal-check` still runs a shell check.
+- Esc or an interrupted run leaves the goal active and waiting. It continues on the next human message or goal timer. A peer interrupt also sends a phone notice.
+- `/reload` keeps a goal running. After a pi restart, an active goal with no timer waits, with one notice. A forked session pauses the copied goal.
+- Goal continuation messages count continuations, not turns. Goal phone notices do not repeat their title.
+
 ## [1.4.0] - 2026-11-09
 
 ### Added

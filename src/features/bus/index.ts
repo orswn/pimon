@@ -90,6 +90,8 @@ declare module "../../core/events.ts" {
 		"bus:peer-gone": PeerGone;
 		/** Sent on start, on each change, and at each session start. `{}` means no endpoint. */
 		"bus:identity": { name?: string; role?: string };
+		/** Sent before a peer's control request aborts the current run. */
+		"bus:interrupt": { from: string };
 	}
 }
 
@@ -446,6 +448,7 @@ class BusRuntime implements ActionHost {
 		}
 		if (action === "interrupt" || action === "abort") {
 			this.notify(`bus: ${envelope.from.name} interrupted this instance`, "warning");
+			this.ctx.events.emit("bus:interrupt", { from: envelope.from.name });
 			this.guard(() => this.extCtx?.abort());
 			this.queueForDigest(undefined, `${envelope.from.name} interrupted you: ${truncate(envelope.body, 200)}`);
 			return;

@@ -30,8 +30,13 @@ schema: {"type":"object","required":["kind","message"],"properties":{"kind":{"ty
 
 ## goal_done
 
-description: Claim that the active goal's completion condition is met. An independent check runs before the claim is accepted. Must be the only tool call in its message.
-schema: {"type":"object","required":["evidence"],"properties":{"evidence":{"type":"string","description":"What in this conversation proves the condition holds: which commands ran and what they output"}}}
+description: Mark the active goal done. Call it only when the objective holds now. Must be the only tool call in its message.
+schema: {"type":"object","required":["evidence"],"properties":{"evidence":{"type":"string","description":"Which commands ran in this goal and what they showed, proving the objective holds now"}}}
+
+## goal_set
+
+description: Create or change the autonomous goal. Only on a direct human message in the current run. create: the human wants work carried on unattended across runs or external waits, such as "keep going until", "until it is deployed", "I'll be away". Do not create one for a question, an explanation, a review, or a task that one run can finish. edit: the human changed what done means, also in a message sent mid-goal, or a goal set with /goal has no objective yet. Change only what the human asked; never narrow or widen it on your own. pause, resume, clear: the human asked for it. Clear only when the human ends the goal itself, not one step.
+schema: {"type":"object","required":["action"],"properties":{"action":{"type":"string","enum":["create","edit","pause","resume","clear"]},"objective":{"type":"string","description":"Required for create and edit. The full end state, self-contained: what must be true, the command or result that shows it, constraints, and when to stop as blocked. Name things."}}}
 
 ## pi_bus
 

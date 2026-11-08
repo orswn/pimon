@@ -64,6 +64,7 @@ describe("toolNeedWarnings", () => {
 		"pi_agents",
 		"pi_bus",
 		"goal_done",
+		"goal_set",
 		"timer",
 		"notify",
 		"background",
@@ -87,8 +88,13 @@ describe("toolNeedWarnings", () => {
 	});
 
 	it("warns when the goal feature is on and goal_done is off", () => {
-		expect(warn(["goal_done"], ["goal"])).toEqual(["tools.goal_done is off, but goal needs it"]);
-		expect(warn(["goal_done"])).toEqual([]);
+		expect(warn(["goal_done", "goal_set"], ["goal"])).toEqual(["tools.goal_done is off, but goal needs it"]);
+		expect(warn(["goal_done", "goal_set"])).toEqual([]);
+	});
+
+	it("warns when goal_set is on and goal_done is off", () => {
+		expect(warn(["goal_done"])).toEqual(["tools.goal_done is off, but goal_set needs it"]);
+		expect(warn(["goal_set"])).toEqual([]);
 	});
 
 	it("warns when a codemode job tool is on and its shell tool is off", () => {
@@ -98,7 +104,7 @@ describe("toolNeedWarnings", () => {
 
 	it("does not warn when the tool that needs another is off too", () => {
 		expect(warn(["pi_bus", "pi_agents"])).toEqual([]);
-		expect(warn(["timer", "notify", "goal_done"])).toEqual([]);
+		expect(warn(["timer", "notify", "goal_done", "goal_set"])).toEqual([]);
 		expect(warn(["background", "background_codemode"])).toEqual([]);
 	});
 });
