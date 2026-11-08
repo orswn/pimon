@@ -30,6 +30,7 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that. Exception: the `bus` feature keeps the `pi-bus:identity` and `pi-bus:refresh` bridge on `pi.events` for the standalone statusline.
 - Read options only from `ctx.config`. Declare them in `configSchema`.
 - Start or steer a model run only through `ctx.wake`. Do not call `pi.sendMessage` with `triggerTurn`.
+- One exception: the agents feature sends the first task of a spawned child with `pi.sendUserMessage`, so the task is a user message.
 
 ## Prompt and cache rules
 

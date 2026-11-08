@@ -22,4 +22,15 @@ describe("rendered prompt sections", () => {
 		await expect(ours.map(([, text]) => text).join("\n\n")).toMatchFileSnapshot("__snapshots__/prompt-sections.md");
 		expect(harness.runtime.diagnostics()).toEqual([]);
 	});
+
+	it("repeats no bullet across the rendered sections", async () => {
+		harness = await createHarness({ features });
+		harness.respond([fauxAssistantMessage(fauxText("ok"))]);
+		await harness.session.prompt("hi");
+		const system = harness.requests[0]?.find((message) => message.role === "system");
+		const bullets = Object.values(system?.sections ?? {})
+			.flatMap((text) => (text ?? "").split("\n"))
+			.filter((line) => line.startsWith("- "));
+		expect(bullets.filter((line, index) => bullets.indexOf(line) !== index)).toEqual([]);
+	});
 });

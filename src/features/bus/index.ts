@@ -59,7 +59,18 @@ export interface BusService {
 	sendTo(peer: PeerRecord, init: SendInit): Promise<SendResult>;
 	onPeerGone(handler: (event: PeerGone) => void): () => void;
 	onReady(handler: (event: BusReady) => void): () => void;
+	/** Called at each node start. A result replaces the launch env name, labels, and control token. */
+	setSpawnIdentity(provider: SpawnIdentityProvider): void;
 }
+
+export interface SpawnIdentity {
+	name?: string | undefined;
+	/** Includes `role` and `parent` when the instance was spawned. */
+	labels: Readonly<Record<string, string>>;
+	controlToken?: string | undefined;
+}
+
+export type SpawnIdentityProvider = (extCtx: ExtensionContext) => SpawnIdentity | undefined;
 
 export interface BusReady {
 	instanceId: string;
@@ -133,6 +144,10 @@ class BusRuntime implements ActionHost {
 	private readonly ctx: FeatureContext<{ historyRetentionDays: number }>;
 	readonly identity: Identity;
 	private readonly sessions: Map<string, SavedSession>;
+	spawnIdentity: SpawnIdentityProvider | undefined;
+	private controlToken: string | undefined;
+	/** A spawned instance obeys only its token. A resumed one has none, so its parent falls back to kill. */
+	private tokenRequired = false;
 
 	constructor(
 		ctx: FeatureContext<{ historyRetentionDays: number }>,
@@ -146,6 +161,28 @@ class BusRuntime implements ActionHost {
 		this.wakePolicy = wakePolicyOf(identity.launch);
 		this.controlPolicy = controlPolicyOf(identity.launch);
 		this.currentStore = new BusStore(undefined, this.dirs);
+		this.controlToken = identity.launch.controlToken;
+	}
+
+	private launchFor(extCtx: ExtensionContext): {
+		launch: LaunchEnv;
+		labels: Record<string, string>;
+		spawned: boolean;
+	} {
+		const launch = this.identity.launch;
+		const spawned = this.spawnIdentity?.(extCtx);
+		if (!spawned) return { launch, labels: busLabels(launch, extCtx.cwd), spawned: false };
+		return {
+			launch: {
+				...launch,
+				name: spawned.name,
+				role: spawned.labels["role"],
+				parent: spawned.labels["parent"],
+				controlToken: spawned.controlToken,
+			},
+			labels: { ...spawned.labels, cwd: extCtx.cwd },
+			spawned: true,
+		};
 	}
 
 	get events(): FeatureContext<unknown>["events"] {
@@ -238,16 +275,19 @@ class BusRuntime implements ActionHost {
 			this.currentStore.load();
 		}
 
-		const { launch, owner } = this.identity;
+		const { owner } = this.identity;
 		let node: BusNode;
 		try {
+			const { launch, labels, spawned } = this.launchFor(extCtx);
+			this.controlToken = launch.controlToken;
+			this.tokenRequired = spawned;
 			node =
 				this.current ??
 				new BusNode({
 					owner,
 					desiredName: defaultName(launch, sessionFile, owner),
 					session: sessionTag(sessionFile),
-					labels: busLabels(launch, extCtx.cwd),
+					labels,
 					cwd: extCtx.cwd,
 					sessionFile,
 					model: extCtx.model?.id,
@@ -334,8 +374,9 @@ class BusRuntime implements ActionHost {
 		const allowed = controlAllowed(
 			envelope,
 			this.controlPolicy,
-			this.identity.launch.controlToken,
+			this.controlToken,
 			node?.labels["parent"],
+			this.tokenRequired,
 		);
 		if (!allowed) {
 			this.notify(`bus: refused ${action} from ${envelope.from.name}`, "warning");
@@ -512,6 +553,9 @@ function createService(runtime: BusRuntime): BusService {
 		sendTo: (peer, init) => runtime.node().sendTo(peer, init),
 		onPeerGone: (handler) => runtime.events.on("bus:peer-gone", handler),
 		onReady: (handler) => runtime.events.on("bus:ready", handler),
+		setSpawnIdentity: (provider) => {
+			runtime.spawnIdentity = provider;
+		},
 	};
 }
 

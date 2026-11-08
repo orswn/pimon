@@ -59,6 +59,10 @@ export interface HarnessOptions {
 	modelsStore?: ModelsStore;
 	/** Bind a UI that records notifications. Given methods replace the recording no-ops. */
 	ui?: Partial<ExtensionUIContext>;
+	/** Set before the extensions bind, for a run that starts at session start. */
+	responses?: FauxResponseStep[];
+	/** Defaults to an empty in-memory session. */
+	sessionManager?: (cwd: string) => SessionManager;
 }
 
 const DEFAULT_SETTINGS: Partial<Settings> = { compaction: { enabled: false }, retry: { enabled: false } };
@@ -151,9 +155,26 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 		model: faux.getModel(),
 		thinkingLevel: "off",
 		resourceLoader,
-		sessionManager: SessionManager.inMemory(cwd),
+		sessionManager: options.sessionManager?.(cwd) ?? SessionManager.inMemory(cwd),
 		settingsManager: SettingsManager.inMemory(mergeSettings(options.settings)),
 	});
+	const requests: Message[][] = [];
+	const respond = (steps: FauxResponseStep[]) => {
+		faux.setResponses(
+			steps.map((step) =>
+				typeof step === "function"
+					? (context, streamOptions, state, model) => {
+							requests.push(structuredClone(context.messages));
+							return step(context, streamOptions, state, model);
+						}
+					: (context) => {
+							requests.push(structuredClone(context.messages));
+							return step;
+						},
+			),
+		);
+	};
+	if (options.responses) respond(options.responses);
 	const extensionErrors: string[] = [];
 	const notifications: Harness["notifications"] = [];
 	const uiNotices: string[] = [];
@@ -176,7 +197,6 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 	});
 	if (!runtime) throw new Error("pimon factory did not run");
 
-	const requests: Message[][] = [];
 	return {
 		session,
 		runtime,
@@ -187,21 +207,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 		extensionErrors,
 		notifications,
 		uiNotices,
-		respond(steps) {
-			faux.setResponses(
-				steps.map((step) =>
-					typeof step === "function"
-						? (context, streamOptions, state, model) => {
-								requests.push(structuredClone(context.messages));
-								return step(context, streamOptions, state, model);
-							}
-						: (context) => {
-								requests.push(structuredClone(context.messages));
-								return step;
-							},
-				),
-			);
-		},
+		respond,
 		async waitForRequests(count, timeoutMs = 10_000) {
 			const deadline = Date.now() + timeoutMs;
 			while (requests.length < count) {

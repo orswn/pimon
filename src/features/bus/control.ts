@@ -29,10 +29,13 @@ export function controlAllowed(
 	policy: ControlPolicy,
 	token: string | undefined,
 	parent: string | undefined,
+	tokenRequired = false,
 ): boolean {
 	if (policy === "none") return false;
 	if (policy === "any") return true;
 	if (token) return tokenMatches(envelope, token);
+	if (tokenRequired) return false;
+	// TODO(okka): remove when no pi runs the standalone bus extension
 	return Boolean(parent) && (envelope.from.owner === parent || envelope.from.instanceId === parent);
 }
 

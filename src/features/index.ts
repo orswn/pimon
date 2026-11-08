@@ -1,4 +1,5 @@
 import type { AnyFeature } from "../core/feature.ts";
+import { agents } from "./agents/index.ts";
 import { ancestorConfig } from "./ancestor-config/index.ts";
 import { askSecret } from "./ask-secret/index.ts";
 import { background } from "./background/index.ts";
@@ -22,5 +23,6 @@ export const features: readonly AnyFeature[] = [
 	ancestorConfig,
 	discovery,
 	bus,
+	agents,
 	statusline,
 ];
