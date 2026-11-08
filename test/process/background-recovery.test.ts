@@ -9,7 +9,7 @@ import { runAction } from "../../src/features/background/index.ts";
 import { captureIdentity, captureOwner } from "../../src/features/background/identity.ts";
 import { type Lease, leaseDir, readLeases, writeLease } from "../../src/features/background/leases.ts";
 import { buildOptions, LIMITS } from "../../src/features/background/options.ts";
-import { sweepLeases } from "../../src/features/background/recovery.ts";
+import { foreignLogFile, sweepLeases } from "../../src/features/background/recovery.ts";
 import {
 	createRegistry,
 	logFileTaken,
@@ -178,6 +178,40 @@ describe("leases from this process and from the old extension", () => {
 			...(withOwner ? { owner } : {}),
 		};
 	}
+
+	it("a log path held by a live sibling pi's lease is refused at start", async () => {
+		useStateDir("foreign-log");
+		const reg = createRegistry(join(root, "agent"));
+		const sibling = captureOwner(process.ppid);
+		if (!sibling) throw new Error("no /proc identity for the parent process");
+		// The parent process stands in for a live sibling pi that owns a live job.
+		const lease: Lease = { ...liveLease("siblingjob", false), owner: sibling };
+		writeLease(lease, leaseDir(reg.agentDir));
+		const refused = await runAction(
+			reg,
+			"background",
+			{ action: "start", name: "mine", command: "true", logFile: lease.logFile },
+			"/tmp",
+		);
+		expect(refused).toBe(
+			`Log file is already used by active job "siblingjob (running pi ${sibling.pid})": ${lease.logFile}`,
+		);
+		expect(reg.active.has("mine")).toBe(false);
+	});
+
+	it("a log path held by this pi's own lease or by a dead owner's lease is not foreign", () => {
+		useStateDir("not-foreign-log");
+		const reg = createRegistry(join(root, "agent"));
+		const own = liveLease("ownjob", true);
+		const deadOwner: Lease = {
+			...liveLease("deadownerjob", true),
+			owner: { pid: 999_999_996, startTicks: 1 },
+		};
+		writeLease(own, leaseDir(reg.agentDir));
+		writeLease(deadOwner, leaseDir(reg.agentDir));
+		expect(foreignLogFile(reg, own.logFile)).toBeUndefined();
+		expect(foreignLogFile(reg, deadOwner.logFile)).toBeUndefined();
+	});
 
 	it("a lease owned by this process that the registry does not track is an orphan, reported once", () => {
 		const stateDir = useStateDir("self-owned");

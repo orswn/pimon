@@ -36,6 +36,8 @@ export interface JobState {
 	muteReason: string | undefined;
 	stopping: boolean;
 	stopTask: Promise<StopOutcome> | undefined;
+	/** A caller that reads the stop outcome joined a stop it did not start. */
+	stopAwaited: boolean;
 	unkillable: boolean;
 	exitedAt: number | undefined;
 	exitStatus: string | undefined;

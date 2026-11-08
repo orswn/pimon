@@ -18,6 +18,7 @@ import {
 	logFileTaken,
 	nameTaken,
 } from "../../src/features/background/registry.ts";
+import { runAction } from "../../src/features/background/index.ts";
 import { editMonitor, shutdownJobs, startJob, stopJob } from "../../src/features/background/runner.ts";
 
 const root = mkdtempSync(join(tmpdir(), "pimon-bg-jobs-"));
@@ -190,6 +191,49 @@ describe("background job", () => {
 		expect(await exited(state)).toBe(true);
 		await sleep(300);
 		expect(emitsFor(options.name)).toHaveLength(1);
+	});
+
+	it("a timeout that leaves the job alive after SIGKILL wakes the agent exactly once", async () => {
+		const options = opts({ command: "sleep 45", timeoutMs: 300 });
+		const state = start(options);
+		const realKill = state.kill;
+		state.kill = () => {};
+		state.liveness = () => "alive";
+		try {
+			const survived = () => emitsFor(options.name).filter((text) => text.includes("still alive after SIGKILL"));
+			expect(await waitFor(() => survived().length > 0, 8_000)).toBe(true);
+			const again = await stopJob(reg, state, "stopped by agent");
+			expect(again.result).toBe("unkillable");
+			await sleep(LIMITS.unkillablePollMs + 300);
+			expect(survived()).toHaveLength(1);
+			expect(survived()[0]).toContain(`background "${options.name}"`);
+			expect(survived()[0]).toContain(options.logFile);
+			expect(state.unkillable).toBe(true);
+			expect(state.exitedAt).toBeUndefined();
+		} finally {
+			state.kill = realKill;
+			state.kill("SIGKILL");
+			await exited(state);
+		}
+	});
+
+	it("an agent stop that joins a timeout stop reports the survivor only in its result", async () => {
+		const options = opts({ command: "sleep 45", timeoutMs: 300 });
+		const state = start(options);
+		const realKill = state.kill;
+		state.kill = () => {};
+		state.liveness = () => "alive";
+		try {
+			expect(await waitFor(() => state.stopping, 5_000)).toBe(true);
+			const result = await runAction(reg, "background", { action: "stop", name: options.name }, root);
+			expect(result).toContain("still alive after SIGKILL");
+			await sleep(LIMITS.unkillablePollMs + 300);
+			expect(emitsFor(options.name).filter((text) => text.includes("still alive after SIGKILL"))).toHaveLength(0);
+		} finally {
+			state.kill = realKill;
+			state.kill("SIGKILL");
+			await exited(state);
+		}
 	});
 });
 

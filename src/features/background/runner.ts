@@ -77,6 +77,7 @@ export function startJob(reg: Registry, options: JobOptions, sessionId?: string)
 		muteReason: undefined,
 		stopping: false,
 		stopTask: undefined,
+		stopAwaited: false,
 		unkillable: false,
 		exitedAt: undefined,
 		exitStatus: undefined,
@@ -262,7 +263,7 @@ function flush(reg: Registry, state: JobState): void {
 			logFile: state.sink.path,
 		}),
 	);
-	if (options.once) void stopJob(reg, state, "matched once");
+	if (options.once) void stopJob(reg, state, "matched once", { reportUnkillable: true });
 }
 
 function patternLabel(options: MonitorOptions): string {
@@ -421,7 +422,7 @@ function armTimeout(reg: Registry, state: JobState): void {
 				`Partial output is in ${state.sink.path}.`,
 			].join("\n"),
 		);
-		void stopJob(reg, state, "timeout");
+		void stopJob(reg, state, "timeout", { reportUnkillable: true });
 	}, state.options.timeoutMs);
 	state.timeoutTimer.unref();
 }
@@ -432,6 +433,12 @@ export interface StopOptions {
 	afterKillMs?: number;
 	/** At quit nobody is left to wake, so a survivor is not polled. */
 	watch?: boolean;
+	/** A stop the agent did not ask for has no tool result, so a survivor is reported by a wake. */
+	reportUnkillable?: boolean;
+}
+
+export function describeStop(result: StopOutcome, logFile: string): string {
+	return [`${result.kind} "${result.name}": ${result.text}`, `Log kept at ${logFile}`].join("\n");
 }
 
 /** Concurrent calls share one stop, so a job is never retired twice. */
@@ -441,7 +448,11 @@ export function stopJob(
 	reason: string,
 	options: StopOptions = {},
 ): Promise<StopOutcome> {
-	if (state.stopTask) return state.stopTask;
+	if (state.stopTask) {
+		// A joining caller that reads the outcome makes the unkillable wake a duplicate.
+		if (!options.reportUnkillable) state.stopAwaited = true;
+		return state.stopTask;
+	}
 	if (state.exitedAt !== undefined) {
 		return Promise.resolve(outcome(state, "already", `already ended: ${state.exitStatus ?? "ended"}`));
 	}
@@ -471,11 +482,14 @@ async function runStop(reg: Registry, state: JobState, reason: string, options: 
 		return killed();
 	}
 	if (options.watch !== false) watchUnkillable(reg, state, reason);
-	return outcome(
+	const survived = outcome(
 		state,
 		"unkillable",
 		`still alive after SIGKILL (pid ${state.pid ?? "unknown"}, pgid ${state.identity?.pgid ?? state.pid ?? "unknown"}). It is polled every ${formatDuration(LIMITS.unkillablePollMs)} and you will be woken when it dies.`,
 	);
+	// runStop runs once per job, so this wakes at most once.
+	if (options.reportUnkillable && !state.stopAwaited) emit(reg, state, describeStop(survived, state.sink.path));
+	return survived;
 }
 
 function outcome(state: JobState, result: StopOutcome["result"], text: string): StopOutcome {

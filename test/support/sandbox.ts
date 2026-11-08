@@ -30,6 +30,8 @@ export const ISOLATED_ENV_KEYS = [
 	"TMUX",
 	"TMUX_PANE",
 	"DBUS_SESSION_BUS_ADDRESS",
+	"DISPLAY",
+	"WAYLAND_DISPLAY",
 ] as const;
 
 export function scrubEnv(env: NodeJS.ProcessEnv): void {

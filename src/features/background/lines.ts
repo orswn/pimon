@@ -36,7 +36,7 @@ export class LineSplitter {
 		for (;;) {
 			const index = this.buffer.search(/[\r\n]/);
 			if (index === -1) break;
-			this.take(this.buffer.slice(0, index));
+			this.takeInPieces(this.buffer.slice(0, index));
 			this.buffer = this.buffer.slice(index + 1);
 		}
 		while (this.buffer.length > this.maxLineChars) {
@@ -49,6 +49,12 @@ export class LineSplitter {
 		const rest = this.buffer;
 		this.buffer = "";
 		this.take(rest);
+	}
+
+	private takeInPieces(raw: string): void {
+		for (let start = 0; start < raw.length; start += this.maxLineChars) {
+			this.take(raw.slice(start, start + this.maxLineChars));
+		}
 	}
 
 	private take(raw: string): void {

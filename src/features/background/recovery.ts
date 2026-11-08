@@ -78,6 +78,17 @@ export function foreignOwner(reg: Registry, name: string): number | undefined {
 	return undefined;
 }
 
+/** The job of a live sibling pi that holds this log path, if there is one. */
+export function foreignLogFile(reg: Registry, file: string): string | undefined {
+	for (const entry of readLeases(leaseDir(reg.agentDir))) {
+		const lease = entry.lease;
+		if (!lease || lease.logFile !== file) continue;
+		if (classifyLease(lease, false) !== "foreign") continue;
+		return `${lease.name} (running pi ${lease.owner?.pid ?? "unknown"})`;
+	}
+	return undefined;
+}
+
 // Without this a reservation outlives its process: the sweep sees an orphan alive, it exits
 // an hour later, and the name stays blocked until pi restarts.
 export function refreshOrphans(reg: Registry): void {

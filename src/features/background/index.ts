@@ -9,7 +9,7 @@ import { deleteLease } from "./leases.ts";
 import { readTail } from "./logsink.ts";
 import { buildOptions, type Kind, LIMITS, parseMonitorEdit } from "./options.ts";
 import { BACKGROUND_PROMPT } from "./prompt.ts";
-import { foreignOwner, refreshOrphans, sweepLeases } from "./recovery.ts";
+import { foreignLogFile, foreignOwner, refreshOrphans, sweepLeases } from "./recovery.ts";
 import {
 	activeJobs,
 	createRegistry,
@@ -29,7 +29,7 @@ import {
 	routeDigest,
 	runtimeMs,
 } from "./registry.ts";
-import { dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
+import { describeStop, dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
 
 interface LogsResult {
 	name: string;
@@ -63,6 +63,8 @@ export const background = defineFeature({
 
 		ctx.onSessionStart((event, extensionCtx) => {
 			bindSession(reg, extensionCtx);
+			// Without a UI, this report and digests from another session are dropped: such a session has no
+			// place to show them, and `background list` shows orphans.
 			const notify = (text: string, level: "info" | "warning") => {
 				if (extensionCtx.hasUI) extensionCtx.ui.notify(text, level);
 			};
@@ -142,7 +144,7 @@ export const monitorParameters = Type.Object({
 	match: Type.Optional(
 		Type.String({
 			description:
-				"Required. A literal substring by default; regex characters are rejected unless regex=true. Matched per line; lines over 16 KB are split, so a match spanning the split is missed",
+				"Required. A literal substring by default; regex characters are rejected unless regex=true. Matched per line; lines over 16 000 characters are split, so a match spanning the split is missed",
 		}),
 	),
 	regex: Type.Optional(
@@ -245,7 +247,7 @@ function start(reg: Registry, kind: Kind, params: Record<string, unknown>, defau
 		defaultCwd,
 		nextId: () => nextId(reg),
 		isNameTaken: (name) => nameTaken(reg, name),
-		isLogFileTaken: (file) => logFileTaken(reg, file),
+		isLogFileTaken: (file) => logFileTaken(reg, file) ?? foreignLogFile(reg, file),
 		activeCount: () => reg.active.size,
 		dirExists,
 	});
@@ -457,7 +459,7 @@ async function stop(reg: Registry, kind: Kind, name: string): Promise<string> {
 	const state = reg.active.get(name);
 	if (!state) return stopOrphan(reg, name);
 	const result = await stopJob(reg, state, "stopped by agent");
-	return [`${result.kind} "${name}": ${result.text}`, `Log kept at ${state.sink.path}`].join("\n");
+	return describeStop(result, state.sink.path);
 }
 
 function unknownActive(reg: Registry, name: string): string {

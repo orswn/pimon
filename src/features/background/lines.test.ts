@@ -20,6 +20,22 @@ describe("LineSplitter", () => {
 		expect(forced[0]).toBe("xxxx");
 	});
 
+	it("splits a long line that arrives with its newline into pieces of maxLineChars", () => {
+		const input = "x".repeat(100_000);
+		const seen = split(16_000, `${input}\n`);
+		expect(seen).toHaveLength(Math.ceil(100_000 / 16_000));
+		expect(seen.every((line) => line.length <= 16_000)).toBe(true);
+		expect(seen.join("")).toBe(input);
+	});
+
+	it("splits a long line that ends in a later chunk into pieces of maxLineChars", () => {
+		const input = "a".repeat(30_000) + "b".repeat(30_000);
+		const seen = split(16_000, input.slice(0, 30_000), `${input.slice(30_000)}\n`);
+		expect(seen).toHaveLength(Math.ceil(60_000 / 16_000));
+		expect(seen.every((line) => line.length <= 16_000)).toBe(true);
+		expect(seen.join("")).toBe(input);
+	});
+
 	it("holds an incomplete line until a break arrives, then emits it joined", () => {
 		const seen: string[] = [];
 		const splitter = new LineSplitter(100, (line) => seen.push(line));

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
+import { scrubEnv } from "../support/sandbox.ts";
 
 const root = mkdtempSync(join(tmpdir(), "pimon-bg-e2e-"));
 const extension = join(import.meta.dirname, "../../src/index.ts");
@@ -19,11 +20,14 @@ interface Run {
 function runPi(prompt: string, label: string): Promise<Run> {
 	const work = join(root, `work-${label}`);
 	mkdirSync(work, { recursive: true });
+	// The real HOME, PATH, and model auth vars stay, because the real model needs them.
+	const env = { ...process.env };
+	scrubEnv(env);
 	return new Promise((resolve) => {
 		const child = spawn("pi", ["-p", "--no-extensions", "-e", extension, "--model", model, prompt], {
 			cwd: work,
 			env: {
-				...process.env,
+				...env,
 				PI_CODING_AGENT_SESSION_DIR: join(root, "sessions", label),
 				PI_BUS_DIR: join(root, `bus-${label}`),
 				PI_BACKGROUND_DIR: join(root, `state-${label}`),

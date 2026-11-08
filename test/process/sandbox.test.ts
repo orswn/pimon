@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { describe, expect, it } from "vite-plus/test";
-import { STUBBED_COMMANDS } from "../support/sandbox.ts";
+import { ISOLATED_ENV_KEYS, ISOLATED_ENV_PREFIXES, scrubEnv, STUBBED_COMMANDS } from "../support/sandbox.ts";
+
+const isolated = (key: string) =>
+	ISOLATED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+	(ISOLATED_ENV_KEYS as readonly string[]).includes(key);
 
 const sandbox = process.env["PIMON_TEST_SANDBOX"] ?? "";
 
@@ -20,13 +24,21 @@ describe("test sandbox", () => {
 	});
 
 	it("removes the environment that reaches a live pi or terminal", () => {
-		const leaked = Object.keys(process.env).filter(
-			(key) =>
-				key.startsWith("PI_BUS_") ||
-				key.startsWith("HERDR_") ||
-				["PI_ASK_SECRET_SOCK", "SUDO_ASKPASS", "TMUX", "DBUS_SESSION_BUS_ADDRESS"].includes(key),
-		);
-		expect(leaked).toEqual([]);
+		expect(Object.keys(process.env).filter(isolated)).toEqual([]);
+	});
+
+	it("scrubs every isolated key and prefix", () => {
+		const env: NodeJS.ProcessEnv = { HOME: "/home/kept", PATH: "/bin" };
+		for (const key of ISOLATED_ENV_KEYS) env[key] = "fake";
+		for (const prefix of ISOLATED_ENV_PREFIXES) env[`${prefix}FAKE`] = "fake";
+		scrubEnv(env);
+		expect(env).toEqual({ HOME: "/home/kept", PATH: "/bin" });
+	});
+
+	it("scrubs the X11 and Wayland display", () => {
+		const env: NodeJS.ProcessEnv = { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-1" };
+		scrubEnv(env);
+		expect(env).toEqual({});
 	});
 
 	it.each(STUBBED_COMMANDS)("resolves %s to the recording stub", (command) => {
