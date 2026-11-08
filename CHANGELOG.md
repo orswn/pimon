@@ -4,6 +4,30 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+### Added
+
+- `ask-secret` feature: askpass socket in the TUI, `[[secret:...]]` input, and redaction of secrets from tool results, full output files, and model wakes. Moved from the standalone extension.
+- `compaction` feature: warns when a model compacts later than `maxThresholdTokens`. `/compaction-overrides` prints the missing `compaction.modelOverrides`.
+- `ancestor-config` feature: skills, prompts, and MCP servers from `.pi` and `.agents` dirs between the home dir and the working dir.
+- `discovery` feature: lists the models of providers marked with `dynamicDiscovery` in `models.json`.
+- `<secrets>` prompt section.
+- Core `ctx.wake` and `ctx.wakeFilter` for messages that start or steer a model run.
+
+### Changed
+
+- Compaction thresholds come from pi's `compaction.modelOverrides`. The feature does not change the model or compact by itself.
+- Model discovery no longer blocks startup on the network.
+
+### Fixed
+
+- A background digest or other wake that arrives during a manual compaction no longer starts a parallel run on the old context or a second compaction.
+- An askpass reply is redacted from later tool output.
+- Secrets in background job output no longer reach the model through the exit digest.
+- Discovered models stay available while pi refreshes the model catalog.
+- ancestor-config ignores a working dir outside the home dir.
+
 ## [0.4.0] - 2026-11-07
 
 ### Added
