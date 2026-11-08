@@ -54,6 +54,7 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				pi: ctx.pi,
 				bus,
 				paths,
+				agentDir: ctx.agentDir,
 				userRolesDir: join(ctx.agentDir, "agents"),
 				placer: options.placer ?? createHerdrPlacer({ exec: options.exec ?? runner.run }),
 				records: new ChildRecords(paths),

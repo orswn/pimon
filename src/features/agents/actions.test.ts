@@ -153,6 +153,7 @@ function setup(root: string, options: Options = {}): Harness {
 		pi,
 		bus,
 		paths,
+		agentDir: process.env["PI_CODING_AGENT_DIR"] ?? root,
 		userRolesDir,
 		placer,
 		records,
@@ -216,7 +217,8 @@ describe("spawn", () => {
 		expect(visible).not.toContain("--help me");
 		expect(visible).not.toContain(data?.controlToken);
 		expect(visible).not.toContain("You work.");
-		expect(Object.keys(request.env)).toEqual(["PIMON_SPAWN_FILE"]);
+		expect(Object.keys(request.env)).toEqual(["PIMON_SPAWN_FILE", "PI_CODING_AGENT_DIR"]);
+		expect(request.env["PI_CODING_AGENT_DIR"]).toBe(process.env["PI_CODING_AGENT_DIR"]);
 		expect(data?.child.labels).toMatchObject({ role: "worker", parent: OWNER, depth: "1" });
 		expect(data?.parent).toEqual({ name: "boss", owner: OWNER });
 	});

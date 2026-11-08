@@ -134,6 +134,8 @@ export interface AgentsHost {
 	pi: ExtensionAPI;
 	bus: BusService;
 	paths: AgentPaths;
+	/** As pi resolved it, with `~` expanded. */
+	agentDir: string;
 	/** `<agentDir>/agents`. */
 	userRolesDir: string;
 	placer: Placer;
@@ -477,8 +479,17 @@ export function buildChildArgs(options: { runtime: ResolvedRuntime; role: Role; 
 	return args;
 }
 
-export function buildChildEnv(spawnFile: string, busDir: string | undefined): Record<string, string> {
-	return busDir ? { PIMON_SPAWN_FILE: spawnFile, PI_BUS_DIR: busDir } : { PIMON_SPAWN_FILE: spawnFile };
+/** A Herdr pane does not inherit the parent env. Without the agent dir, the child joins another bus. */
+export function buildChildEnv(
+	spawnFile: string,
+	busDir: string | undefined,
+	agentDir: string,
+	parentEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+	const env: Record<string, string> = { PIMON_SPAWN_FILE: spawnFile };
+	if (busDir) env["PI_BUS_DIR"] = resolve(busDir);
+	if (parentEnv["PI_CODING_AGENT_DIR"]) env["PI_CODING_AGENT_DIR"] = resolve(agentDir);
+	return env;
 }
 
 function resolveCwd(ctx: ExtensionContext, requested: string | undefined): string {
@@ -608,7 +619,7 @@ export async function spawnAction(
 				title: displayName,
 				cwd,
 				args: buildChildArgs({ runtime, role, sessionFile: forkSessionFile }),
-				env: buildChildEnv(spawnFile, bus.launch.dir),
+				env: buildChildEnv(spawnFile, bus.launch.dir, host.agentDir),
 				closeHook,
 			},
 			spawnId,

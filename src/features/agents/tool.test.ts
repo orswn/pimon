@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { delegatedPrompt } from "./prompt.ts";
 import type { Role } from "./roles.ts";
@@ -31,9 +32,33 @@ describe("child command line", () => {
 		expect(args.join(" ")).not.toContain("--append-system-prompt");
 	});
 
-	it("passes only the spawn file and the bus dir in the env", () => {
-		expect(buildChildEnv("/x/spawn.json", undefined)).toEqual({ PIMON_SPAWN_FILE: "/x/spawn.json" });
-		expect(buildChildEnv("/x/spawn.json", "/b")).toEqual({ PIMON_SPAWN_FILE: "/x/spawn.json", PI_BUS_DIR: "/b" });
+	it("passes only the spawn file and the bus dir when the parent has no agent dir", () => {
+		expect(buildChildEnv("/x/spawn.json", undefined, "/agents/x", {})).toEqual({ PIMON_SPAWN_FILE: "/x/spawn.json" });
+		expect(buildChildEnv("/x/spawn.json", "/b", "/agents/x", {})).toEqual({
+			PIMON_SPAWN_FILE: "/x/spawn.json",
+			PI_BUS_DIR: "/b",
+		});
+	});
+
+	it("passes the agent dir of the parent only when the parent has one set", () => {
+		const parent = { PI_CODING_AGENT_DIR: "~/agents/x", HOME: "/home/u" };
+		expect(buildChildEnv("/x/spawn.json", undefined, "/home/u/agents/x", parent)).toEqual({
+			PIMON_SPAWN_FILE: "/x/spawn.json",
+			PI_CODING_AGENT_DIR: "/home/u/agents/x",
+		});
+		expect(buildChildEnv("/x/spawn.json", undefined, "/agents/x", { PI_CODING_AGENT_DIR: "" })).toEqual({
+			PIMON_SPAWN_FILE: "/x/spawn.json",
+		});
+	});
+
+	it("passes a relative agent dir and bus dir as absolute paths", () => {
+		// The child starts in its own cwd, so a relative path would name another dir there.
+		const env = buildChildEnv("/x/spawn.json", "bus-dir", "agent-dir", { PI_CODING_AGENT_DIR: "agent-dir" });
+		expect(env).toEqual({
+			PIMON_SPAWN_FILE: "/x/spawn.json",
+			PI_BUS_DIR: resolve("bus-dir"),
+			PI_CODING_AGENT_DIR: resolve("agent-dir"),
+		});
 	});
 });
 
