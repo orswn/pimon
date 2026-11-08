@@ -12,7 +12,7 @@ interface Call {
 }
 
 function recorder(
-	listing = "d0dafe4e_3d55_43ac_b2e6_b69618222619\n_f6f7163a_d012_4208_bdc8_86ecc059b80c_\n2 devices found\n",
+	listing = "aaaaaaaa_1111_2222_3333_444444444444\n_bbbbbbbb_5555_6666_7777_888888888888_\n2 devices found\n",
 ) {
 	const calls: Call[] = [];
 	const exec: ExecFn = async (command, args, options) => {
@@ -132,7 +132,7 @@ describe("notification failures are retryable", () => {
 		let mode = "fail";
 		const exec: ExecFn = async (command, args) => {
 			if (command === "kdeconnect-cli" && args[0] === "-a")
-				return { code: 0, stdout: "d0dafe4e_3d55_43ac_b2e6_b69618222619\n", stderr: "" };
+				return { code: 0, stdout: "aaaaaaaa_1111_2222_3333_444444444444\n", stderr: "" };
 			return mode === "fail" ? { code: 1, stdout: "", stderr: "no bus" } : ok;
 		};
 		let clock = T0;
