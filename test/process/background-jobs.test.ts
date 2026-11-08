@@ -507,7 +507,8 @@ describe("leases of running jobs", () => {
 		const before = leaseFiles().length;
 		await stopJob(reg, state, "lease cleanup");
 		expect(leaseFiles().length).toBeLessThan(before);
-		expect(state.liveness()).toBe("gone");
+		// A group member can stay in /proc for a moment after the leader exits.
+		expect(await waitFor(() => state.liveness() === "gone")).toBe(true);
 	});
 });
 
