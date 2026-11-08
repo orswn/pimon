@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-08
+
 ### Added
 
 - `statusline` feature with the footer status line and the working indicator. Moved from the standalone extension. Options: `usage`, `usagePollSeconds`, `gitStatus`.
