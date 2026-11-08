@@ -1,3 +1,4 @@
+import { existsSync, rmSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext, SessionStartEvent } from "@earendil-works/pi-coding-agent";
 import type { FeatureLog } from "../../core/feature.ts";
 import type { SpawnIdentity } from "../bus/index.ts";
@@ -72,6 +73,45 @@ export function spawnIdentity(source: SpawnSource | undefined): SpawnIdentity | 
 /** The first task may meet a run that already started, from a bus digest or from the human in the pane. */
 export function sendTask(pi: ExtensionAPI, task: string): void {
 	pi.sendUserMessage(task, { deliverAs: "followUp" });
+}
+
+/**
+ * Herdr's agent start fails when pi is busy past its timeout, and the parent then closes the pane.
+ * After the deadline the task goes anyway, so a parent that died after placement does not strand it.
+ * Returns a cancel function.
+ */
+export function awaitPlacement(
+	marker: string,
+	timing: { pollMs: number; waitMs: number },
+	send: () => void,
+): () => void {
+	const deadline = Date.now() + timing.waitMs;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const check = () => {
+		timer = undefined;
+		const placed = existsSync(marker);
+		if (!placed && Date.now() < deadline) {
+			schedule();
+			return;
+		}
+		if (placed) {
+			try {
+				rmSync(marker, { force: true });
+			} catch {
+				// The send must not depend on the cleanup. Old spawn files are pruned later.
+			}
+		}
+		send();
+	};
+	const schedule = () => {
+		timer = setTimeout(check, timing.pollMs);
+		timer.unref();
+	};
+	schedule();
+	return () => {
+		if (timer) clearTimeout(timer);
+		timer = undefined;
+	};
 }
 
 /** Tools first, so the prompt render that follows sees the allowlist. Returns the task to send once, after the render. */

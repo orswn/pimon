@@ -8,6 +8,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - The statusline context segment shows tokens against the compaction threshold, not the model context window.
 
+### Fixed
+
+- A child whose first turn runs longer than 30 s no longer fails its Herdr placement and gets closed. The child sends its first task after the parent's placement returns.
+
 ## [1.0.0] - 2026-11-08
 
 ### Changed

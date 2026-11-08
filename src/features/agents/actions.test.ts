@@ -161,7 +161,7 @@ function setup(root: string, options: Options = {}): Harness {
 		userRolesDir,
 		placer,
 		records,
-		timing: { spawnWaitMs: 300, pollMs: 10, killGraceMs: 50 },
+		timing: { spawnWaitMs: 300, pollMs: 10, killGraceMs: 50, placedPollMs: 10, placedWaitMs: 300 },
 		pruneOnce: () => {},
 	};
 	return { host, ctx, events, peers, placed, open, records, paths, root };

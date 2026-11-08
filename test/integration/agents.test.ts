@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
@@ -12,6 +12,7 @@ import type { Placer } from "../../src/features/agents/placement.ts";
 import {
 	type AgentPaths,
 	agentPaths,
+	placedMarkerPath,
 	SPAWN_ENTRY,
 	type SpawnFile,
 	spawnEntry,
@@ -70,6 +71,10 @@ function spawnData(spawnId: string, tools: string[] | undefined): SpawnFile {
 	};
 }
 
+function pause(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function bullets(text: string): string[] {
 	return text.split("\n").filter((line) => line.startsWith("- "));
 }
@@ -106,7 +111,7 @@ describe("agents feature", () => {
 		const agents = createAgentsFeature({
 			paths,
 			...(placer ? { placer } : {}),
-			timing: { spawnWaitMs: 3_000, pollMs: 20 },
+			timing: { spawnWaitMs: 3_000, pollMs: 20, placedPollMs: 20, placedWaitMs: 5_000 },
 		});
 		// The footer needs a full UI theme. These tests pass a bare UI to see notices.
 		const used = features.filter((feature) => feature.id !== "statusline");
@@ -116,6 +121,13 @@ describe("agents feature", () => {
 	async function start(options: Partial<HarnessOptions> & { placer?: Placer } = {}): Promise<Harness> {
 		harness = await createHarness({ ...options, features: featureSet(options.placer) });
 		return harness;
+	}
+
+	/** Plays a parent whose placement already returned. */
+	function placedSpawnFile(data: SpawnFile): string {
+		const file = writeSpawnFile(paths, data);
+		writeFileSync(placedMarkerPath(paths.spawn, data.spawnId), "");
+		return file;
 	}
 
 	async function refusesTokenlessControl(h: Harness): Promise<void> {
@@ -139,7 +151,7 @@ describe("agents feature", () => {
 	describe("spawned child", () => {
 		it("reads and deletes its spawn file and starts with the task under its role", async () => {
 			const spawnId = randomUUID();
-			const file = writeSpawnFile(paths, spawnData(spawnId, ["read", "pi_bus"]));
+			const file = placedSpawnFile(spawnData(spawnId, ["read", "pi_bus"]));
 			process.env["PIMON_SPAWN_FILE"] = file;
 			const h = await start({ responses: [fauxAssistantMessage(fauxText("on it"))] });
 			expect(existsSync(file)).toBe(false);
@@ -169,8 +181,42 @@ describe("agents feature", () => {
 			expect(h.runtime.diagnostics()).toEqual([]);
 		});
 
+		it("sends the task only after the parent placed it, with the skills that extensions discover", async () => {
+			const spawnId = randomUUID();
+			process.env["PIMON_SPAWN_FILE"] = writeSpawnFile(paths, spawnData(spawnId, ["read", "pi_bus"]));
+			const skills = join(root, "skills");
+			mkdirSync(join(skills, "parser-notes"), { recursive: true });
+			writeFileSync(
+				join(skills, "parser-notes", "SKILL.md"),
+				"---\nname: parser-notes\ndescription: Notes on the parser.\n---\nRead the grammar first.\n",
+			);
+			const h = await start({
+				responses: [fauxAssistantMessage(fauxText("on it"))],
+				extensions: [
+					(pi) => {
+						pi.on("resources_discover", async () => {
+							await pause(300);
+							return { skillPaths: [skills] };
+						});
+					},
+				],
+			});
+			await pause(200);
+			expect(h.requests).toEqual([]);
+
+			const marker = placedMarkerPath(paths.spawn, spawnId);
+			writeFileSync(marker, "");
+			await h.waitForRequests(1);
+			expect(existsSync(marker)).toBe(false);
+			const first = h.requests[0];
+			expect(first?.find((message) => message.role === "user")?.content).toEqual([
+				{ type: "text", text: "Task: build the parser" },
+			]);
+			expect(JSON.stringify(first?.find((message) => message.role === "system"))).toContain("parser-notes");
+		});
+
 		it("sends no second task after a reload", async () => {
-			const file = writeSpawnFile(paths, spawnData(randomUUID(), ["read", "pi_bus"]));
+			const file = placedSpawnFile(spawnData(randomUUID(), ["read", "pi_bus"]));
 			process.env["PIMON_SPAWN_FILE"] = file;
 			const h = await start({ responses: [fauxAssistantMessage(fauxText("on it"))] });
 			await h.waitForRequests(1);
@@ -184,7 +230,7 @@ describe("agents feature", () => {
 		});
 
 		it("repeats no bullet across all rendered sections", async () => {
-			const file = writeSpawnFile(paths, spawnData(randomUUID(), undefined));
+			const file = placedSpawnFile(spawnData(randomUUID(), undefined));
 			process.env["PIMON_SPAWN_FILE"] = file;
 			const h = await start({ responses: [fauxAssistantMessage(fauxText("on it"))] });
 			await h.waitForRequests(1);
@@ -329,6 +375,83 @@ describe("agents feature", () => {
 			await h.session.prompt("/agents");
 			await until(() => h.uiNotices.some((notice) => notice.includes("(worker)")));
 			expect(h.uiNotices.at(-1)).toContain("status: idle");
+		});
+
+		function workerRole(dir: string): void {
+			mkdirSync(join(dir, "agents"));
+			writeFileSync(join(dir, "agents", "worker.md"), "---\nname: worker\n---\nYou work.\n");
+		}
+
+		function spawnId(request: { env: Record<string, string> }): string {
+			return basename(request.env["PIMON_SPAWN_FILE"] ?? "", ".json");
+		}
+
+		it("marks the child placed only after placement returns", async () => {
+			let agentDir = "";
+			let marker = "";
+			let placedEarly: boolean | undefined;
+			const inner = childPlacer(() => agentDir);
+			const h = await start({
+				placer: {
+					...inner,
+					async place(request, id) {
+						marker = placedMarkerPath(paths.spawn, spawnId(request));
+						const placement = await inner.place(request, id);
+						await pause(100);
+						placedEarly = existsSync(marker);
+						return placement;
+					},
+				},
+				setupAgentDir: (dir) => {
+					agentDir = dir;
+					workerRole(dir);
+				},
+			});
+			h.respond([
+				fauxAssistantMessage(fauxToolCall("pi_agents", { action: "spawn", role: "worker", task: "go" }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage(fauxText("spawned")),
+			]);
+			await h.session.prompt("spawn one");
+			expect(placedEarly).toBe(false);
+			expect(existsSync(marker)).toBe(true);
+		});
+
+		it("removes the placed mark when the child record cannot be saved", async () => {
+			let agentDir = "";
+			let marker = "";
+			const inner = childPlacer(() => agentDir);
+			const h = await start({
+				placer: {
+					...inner,
+					async place(request, id) {
+						marker = placedMarkerPath(paths.spawn, spawnId(request));
+						writeFileSync(paths.state, "not a directory");
+						return inner.place(request, id);
+					},
+					close: async () => false,
+				},
+				setupAgentDir: (dir) => {
+					agentDir = dir;
+					workerRole(dir);
+				},
+			});
+			h.respond([
+				fauxAssistantMessage(fauxToolCall("pi_agents", { action: "spawn", role: "worker", task: "go" }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage(fauxText("failed")),
+			]);
+			await h.session.prompt("spawn one");
+			const result = h.session.messages.find((message) => message.role === "toolResult") as {
+				isError: boolean;
+				content: { text: string }[];
+			};
+			expect(result.isError).toBe(true);
+			expect(result.content[0]?.text).toContain("Could not persist");
+			expect(marker).not.toBe("");
+			expect(existsSync(marker)).toBe(false);
 		});
 
 		it("starts no run when a closed child exits and shows the exit at the next turn", async () => {

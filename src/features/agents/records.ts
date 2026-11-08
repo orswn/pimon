@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ContextMode } from "./context.ts";
 import { closeHookPath, type Placement } from "./placement.ts";
-import { type AgentPaths, ensurePrivateDir, spawnFilePath, writePrivateFile } from "./spawn-file.ts";
+import { type AgentPaths, ensurePrivateDir, placedMarkerPath, spawnFilePath, writePrivateFile } from "./spawn-file.ts";
 
 /** The on-disk shape the standalone extension wrote. Old records must keep loading. */
 export interface ChildRecord {
@@ -81,6 +81,7 @@ export class ChildRecords {
 		for (const path of [
 			this.file(spawnId),
 			spawnFilePath(this.paths, spawnId),
+			placedMarkerPath(this.paths.spawn, spawnId),
 			closeHookPath(this.paths, spawnId),
 			// TODO(okka): remove when no pi runs the standalone bus extension
 			join(this.paths.prompts, `${spawnId}-role.md`),

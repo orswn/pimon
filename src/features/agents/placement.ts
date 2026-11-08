@@ -35,6 +35,7 @@ export interface Placer {
 }
 
 export const OUTSIDE_HERDR = "pi_agents needs a Herdr session. Start pi inside Herdr.";
+export const HERDR_START_TIMEOUT_MS = 30_000;
 
 interface HerdrOptions {
 	exec: ExecFn;
@@ -199,7 +200,7 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 					"--pane",
 					paneId,
 					"--timeout",
-					"30000",
+					String(HERDR_START_TIMEOUT_MS),
 					"--",
 					"-e",
 					request.closeHook,

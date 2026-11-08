@@ -16,7 +16,7 @@ import { OUTSIDE_HERDR, type Placement, type Placer, writeCloseHook } from "./pl
 import { type ChildRecord, ChildRecords } from "./records.ts";
 import { discoverRoles, findRole, formatRoles, parseLabelList, type Role, type RoleSources } from "./roles.ts";
 import { formatRuntime, type ResolvedRuntime, resolveRuntime, THINKING_LEVELS } from "./runtime.ts";
-import { type AgentPaths, writeSpawnFile } from "./spawn-file.ts";
+import { type AgentPaths, placedMarkerPath, writePrivateFile, writeSpawnFile } from "./spawn-file.ts";
 
 const RESERVED_LABELS = new Set(["spawn", "depth", "parent", "owner", "role"]);
 const MAX_DEPTH = 2;
@@ -138,7 +138,7 @@ export interface AgentsHost {
 	userRolesDir: string;
 	placer: Placer;
 	records: ChildRecords;
-	timing: { spawnWaitMs: number; pollMs: number; killGraceMs: number };
+	timing: { spawnWaitMs: number; pollMs: number; killGraceMs: number; placedPollMs: number; placedWaitMs: number };
 	/** Prunes old files once per process. */
 	pruneOnce(sessionRoleKey: string): void;
 }
@@ -640,7 +640,9 @@ export async function spawnAction(
 		controlToken,
 		contextMode: selectedContext.mode,
 	};
+	const placedMarker = placedMarkerPath(host.paths.spawn, spawnId);
 	const unwind = async (stage: string, error: unknown): Promise<never> => {
+		rmSync(placedMarker, { force: true });
 		// Unwatch first: closing a watched child would report its exit as news.
 		if (record.instanceId) bus.unwatch(record.instanceId);
 		const closed = await host.placer.close(placement);
@@ -656,6 +658,11 @@ export async function spawnAction(
 			}`,
 		);
 	};
+	try {
+		writePrivateFile(placedMarker, "");
+	} catch (error) {
+		await unwind("placement", error);
+	}
 	try {
 		host.records.save(record);
 	} catch (error) {

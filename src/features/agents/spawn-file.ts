@@ -84,6 +84,11 @@ export function spawnFilePath(paths: AgentPaths, spawnId: string): string {
 	return join(paths.spawn, `${spawnId}.json`);
 }
 
+/** Exists once the parent's placement returned, so the child's first run cannot fail the placement. */
+export function placedMarkerPath(spawnDir: string, spawnId: string): string {
+	return join(spawnDir, `${spawnId}.placed`);
+}
+
 export function writeSpawnFile(paths: AgentPaths, data: SpawnFile): string {
 	ensurePrivateDir(paths.root);
 	ensurePrivateDir(paths.spawn);
