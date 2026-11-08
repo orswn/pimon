@@ -13,6 +13,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - A bus socket bind error that a retry cannot fix no longer delays every prompt by 2.1 s. The bus tries again at the next session start.
 - A fallback bus socket dir under `$TMPDIR` or `/tmp` is used only if it is a real directory that the user owns. Its mode is set to 0700.
 - The bus unread count no longer includes messages that left the inbox.
+- pimon shows a repeated diagnostic once and keeps the newest 100.
 
 ## [0.12.0] - 2026-11-08
 

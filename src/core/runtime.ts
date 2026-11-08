@@ -47,10 +47,19 @@ export function createPimon(features: readonly AnyFeature[], options: PimonOptio
 	};
 }
 
+const MAX_DIAGNOSTICS = 100;
+
 function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDir: string): PimonRuntime {
 	const diagnostics: Diagnostic[] = [];
+	// Counts every added entry, also dropped ones, so announce() still finds the new ones after a drop.
+	let reported = 0;
 	const report = (feature: Diagnostic["feature"], level: Diagnostic["level"], message: string, cause?: unknown) => {
-		diagnostics.push({ feature, level, message: cause === undefined ? message : `${message}: ${describe(cause)}` });
+		const text = cause === undefined ? message : `${message}: ${describe(cause)}`;
+		const same = (entry: Diagnostic) => entry.feature === feature && entry.level === level && entry.message === text;
+		if (diagnostics.some(same)) return;
+		diagnostics.push({ feature, level, message: text });
+		reported++;
+		if (diagnostics.length > MAX_DIAGNOSTICS) diagnostics.shift();
 	};
 
 	const loaded = loadConfigFile(agentDir);
@@ -126,9 +135,9 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 
 	let announced = 0;
 	const announce = (ctx: ExtensionContext) => {
-		if (!ctx.hasUI || diagnostics.length <= announced) return;
-		const fresh = diagnostics.slice(announced);
-		announced = diagnostics.length;
+		if (!ctx.hasUI || reported <= announced) return;
+		const fresh = diagnostics.slice(-Math.min(reported - announced, diagnostics.length));
+		announced = reported;
 		const level = fresh.some((item) => item.level === "error") ? "error" : "warning";
 		ctx.ui.notify(
 			`pimon: ${fresh.map((item) => `${item.feature}: ${item.message}`).join("\n")}\nRun /pimon for details.`,
