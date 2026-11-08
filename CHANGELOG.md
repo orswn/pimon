@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-08
+
 ### Added
 
 - `vi` feature: a modal vi editor for the prompt. Moved from the standalone extension. Options: `clipboard` (`"yank"` or `"never"`) and `cursorShape`.
