@@ -137,10 +137,16 @@ All features are on by default. The list is in load order.
   - With compaction off, it shows tokens against the model context window.
   - With a reserve at or above the window, it shows tokens only. pi then compacts at every check.
   - A settings change shows from the next run.
+- The work counts follow the path and git status: `A:1 B:2 M:0 T:1`.
+  - `A`: children of this pi that are starting or running, from the `agents` feature.
+  - `B`, `M`: running background jobs and monitors of this pi process, shell and script, from the `background` feature.
+  - `T`: armed timers of the current session, from the `background` feature.
+  - A letter shows only when its feature is on. A narrow terminal drops the counts first.
 - Options:
   - `usage`: boolean, default `true`. Shows provider usage for `anthropic` and `openai-codex`. It calls their usage endpoints.
   - `usagePollSeconds`: integer, default `60`, from `30` to `3600`.
   - `gitStatus`: boolean, default `true`.
+  - `workCounts`: boolean, default `true`. Shows the work counts.
 - External commands: `git`.
 
 ### `vi`

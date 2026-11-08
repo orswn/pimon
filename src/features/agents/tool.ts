@@ -273,6 +273,16 @@ function childStatus(record: ChildRecord, peer: PeerRecord | undefined, changed:
 	return Date.now() - record.launchedAt < STARTING_MS ? "starting" : "never-started";
 }
 
+/**
+ * A child that is starting or on the bus. `leftEndpoints` holds endpoints that announced their exit:
+ * their presence stays listed until the child process removes it.
+ */
+export function isActiveChild(host: AgentsHost, record: ChildRecord, leftEndpoints: ReadonlySet<string>): boolean {
+	const left = record.instanceId !== undefined && leftEndpoints.has(record.instanceId);
+	const state = childStatus(record, left ? undefined : peerFor(host, record), endpointChangedPeer(host, record));
+	return state !== "exited" && state !== "never-started";
+}
+
 function paneText(placement: Placement, alive: boolean | undefined): string {
 	if (alive === undefined) return `${placement.kind} ${placement.layout}, pane not managed`;
 	return alive ? `${placement.kind} ${placement.layout}` : `${placement.kind} ${placement.layout}, pane is gone`;

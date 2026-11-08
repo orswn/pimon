@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { createRegistry, oldRegistryWarning, routeDigest } from "./registry.ts";
+import { addJob, createRegistry, type JobState, oldRegistryWarning, retireJob, routeDigest } from "./registry.ts";
 
 describe("digest routing", () => {
 	it("steers into the session that started the job", () => {
@@ -39,5 +39,38 @@ describe("registry", () => {
 		const reg = createRegistry("/agent");
 		expect(reg.active.size + reg.completed.size + reg.orphans.size + reg.reportedLeases.size).toBe(0);
 		expect(reg.agentDir).toBe("/agent");
+	});
+});
+
+describe("registry change hook", () => {
+	const job = (name: string) =>
+		({
+			options: { name, kind: "background" },
+			sink: { close: () => {} },
+			matcher: undefined,
+			exitedAt: undefined,
+			markExited: () => {},
+		}) as unknown as JobState;
+
+	it("is called once when a job is added and once when it retires", () => {
+		const reg = createRegistry("/agent");
+		let calls = 0;
+		reg.changed = () => calls++;
+		const state = job("build");
+		addJob(reg, state);
+		expect(calls).toBe(1);
+		retireJob(reg, state, "exit code 0");
+		expect(calls).toBe(2);
+	});
+
+	it("is called once when error and close both retire the same job", () => {
+		const reg = createRegistry("/agent");
+		const state = job("build");
+		addJob(reg, state);
+		let calls = 0;
+		reg.changed = () => calls++;
+		expect(retireJob(reg, state, "error")).toBe(true);
+		expect(retireJob(reg, state, "exit code 1")).toBe(false);
+		expect(calls).toBe(1);
 	});
 });

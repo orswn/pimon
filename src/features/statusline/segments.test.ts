@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { busSegment, compactPath, goalSegment, layoutLine, type LineParts, type ThemeLike } from "./segments.ts";
+import {
+	busSegment,
+	compactPath,
+	countsSegment,
+	goalSegment,
+	layoutLine,
+	type LineParts,
+	type ThemeLike,
+} from "./segments.ts";
 
 const theme: ThemeLike = { fg: (_color, text) => text, bold: (text) => text };
 const NOW = new Date(2026, 10, 8, 14, 0, 0).getTime();
@@ -57,6 +65,30 @@ describe("goal segment", () => {
 	});
 });
 
+describe("counts segment", () => {
+	const colored: ThemeLike = { fg: (color, text) => `<${color}>${text}`, bold: (text) => text };
+
+	it("shows agents, background, monitors, and timers in that order", () => {
+		expect(countsSegment({ agents: 2, background: 2, monitor: 2, timers: 1 }, theme)).toBe("A:2 B:2 M:2 T:1");
+	});
+
+	it("shows a zero count as 0", () => {
+		expect(countsSegment({ agents: 0, background: 0, monitor: 0, timers: 0 }, theme)).toBe("A:0 B:0 M:0 T:0");
+	});
+
+	it("dims a zero count and accents a non-zero count", () => {
+		expect(countsSegment({ agents: 0, background: 1, monitor: 0, timers: 3 }, colored)).toBe(
+			"<dim>A:0 <accent>B:1 <dim>M:0 <accent>T:3",
+		);
+	});
+
+	it("hides the letters of a feature that never published", () => {
+		expect(countsSegment({ background: 1, monitor: 0, timers: 0 }, theme)).toBe("B:1 M:0 T:0");
+		expect(countsSegment({ agents: 2 }, theme)).toBe("A:2");
+		expect(countsSegment({}, theme)).toBeUndefined();
+	});
+});
+
 describe("compact path", () => {
 	it("keeps short paths and shortens long ones", () => {
 		expect(compactPath("/home/u/src", "/home/u")).toBe("~/src");
@@ -94,6 +126,21 @@ describe("line layout", () => {
 		expect(shown(full - 13)).toEqual(["G", "$"]);
 		expect(shown(full - 26)).toEqual(["G"]);
 		expect(shown(full - 39)).toEqual([]);
+	});
+
+	it("shows the counts after the location, behind the group separator", () => {
+		const line = layoutLine({ ...parts, counts: "A:0 B:1" }, 200, theme);
+		expect(line.startsWith(`${"L".repeat(10)} │ A:0 B:1 `)).toBe(true);
+	});
+
+	it("drops the counts before the bus", () => {
+		const withCounts = { ...parts, counts: "A:0 B:1" };
+		const wide = full + 3 + 7;
+		expect(layoutLine(withCounts, wide + 1, theme)).toContain("A:0 B:1");
+		const narrow = layoutLine(withCounts, wide, theme);
+		expect(narrow).not.toContain("A:0");
+		expect(narrow).toContain("B".repeat(10));
+		expect(layoutLine(withCounts, full, theme)).not.toContain("B".repeat(10));
 	});
 
 	it("never drops model and context", () => {

@@ -8,6 +8,7 @@ import {
 	type BusIdentity,
 	busSegment,
 	compactPath,
+	countsSegment,
 	fmt,
 	type GoalIndicator,
 	gitSegment,
@@ -15,6 +16,7 @@ import {
 	layoutLine,
 	type ThemeLike,
 	usageColor,
+	type WorkCounts,
 } from "./segments.ts";
 import { cacheHitRate, createStatsCache } from "./totals.ts";
 import {
@@ -31,6 +33,7 @@ const configSchema = Type.Object(
 		usage: Type.Boolean({ default: true }),
 		usagePollSeconds: Type.Integer({ minimum: 30, maximum: 3600, default: 60 }),
 		gitStatus: Type.Boolean({ default: true }),
+		workCounts: Type.Boolean({ default: true }),
 	},
 	{ additionalProperties: false },
 );
@@ -60,6 +63,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 			let renderNow: (() => void) | undefined;
 			let bus: BusIdentity | undefined;
 			let goal: GoalIndicator | undefined;
+			const counts: WorkCounts = {};
 			let aborter = new AbortController();
 			let usage: UsagePoller | undefined;
 			const git = createGitWatch({
@@ -96,6 +100,20 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				goal = payload;
 				renderNow?.();
 			});
+
+			// Agents and background are optional: a feature that is off never publishes, so its letters do not show.
+			if (config.workCounts) {
+				ctx.events.on("agents:counts", ({ active }) => {
+					counts.agents = active;
+					renderNow?.();
+				});
+				ctx.events.on("background:counts", (payload) => {
+					counts.background = payload.background;
+					counts.monitor = payload.monitor;
+					counts.timers = payload.timers;
+					renderNow?.();
+				});
+			}
 
 			const renderLine = (ext: ExtensionContext, theme: ThemeLike, gitBranch: string | null, width: number): string => {
 				const time = now();
@@ -150,6 +168,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				return layoutLine(
 					{
 						loc,
+						counts: countsSegment(counts, theme),
 						model: modelPart,
 						context: contextPart,
 						bus: busSegment(bus, theme),
@@ -193,7 +212,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 
 			ctx.onSessionStart((_event, ext) => {
 				cachedLimit = undefined;
-				// Bus and goal are not cleared: both start first and always publish at session start, `{}` when empty.
+				// Bus, goal, agents, and background are not cleared: they start first and always publish at session start.
 				aborter = new AbortController();
 				usage = config.usage
 					? createUsagePoller({

@@ -84,6 +84,8 @@ export interface Registry {
 	sessionId: string | undefined;
 	emit: (state: JobState, text: string) => void;
 	notice: ((text: string) => void) | undefined;
+	/** Called after a job was added to or removed from `active`. */
+	changed?: (() => void) | undefined;
 	oldRegistryWarned: boolean;
 }
 
@@ -98,6 +100,7 @@ export function createRegistry(agentDir: string): Registry {
 		sessionId: undefined,
 		emit: () => {},
 		notice: undefined,
+		changed: undefined,
 		oldRegistryWarned: false,
 	};
 }
@@ -157,6 +160,7 @@ export function activeJobs(reg: Registry, kind?: Kind): JobState[] {
 export function addJob(reg: Registry, state: JobState): void {
 	reg.active.set(state.options.name, state);
 	reg.completed.delete(state.options.name);
+	reg.changed?.();
 }
 
 export function addOrphan(reg: Registry, record: OrphanRecord): void {
@@ -188,6 +192,7 @@ export function retireJob(reg: Registry, state: JobState, status: string): boole
 		reg.completed.delete(oldest.value);
 	}
 	state.markExited();
+	reg.changed?.();
 	return true;
 }
 

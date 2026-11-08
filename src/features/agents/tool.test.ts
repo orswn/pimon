@@ -2,7 +2,9 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { delegatedPrompt } from "./prompt.ts";
 import type { Role } from "./roles.ts";
-import { buildChildArgs, buildChildEnv } from "./tool.ts";
+import type { PeerRecord } from "../bus/protocol.ts";
+import type { ChildRecord } from "./records.ts";
+import { type AgentsHost, buildChildArgs, buildChildEnv, isActiveChild } from "./tool.ts";
 
 const role = (mcp: boolean): Role => ({
 	name: "worker",
@@ -74,5 +76,39 @@ describe("delegated section", () => {
 - When the design is incomplete, ambiguous, or contradictory, ask with \`kind="question"\` and \`expectReply=true\`. Do not make architectural or system design decisions.
 - Do not spawn further agents unless the human or coordinator explicitly requests it.
 - Do not run \`/reload\`. It replaces your tracked bus endpoint.`);
+	});
+});
+
+describe("active child", () => {
+	const OWNER = "parent-owner";
+	const peer = (spawnId: string, instanceId: string) =>
+		({ instanceId, labels: { spawn: spawnId, parent: OWNER }, stale: false }) as unknown as PeerRecord;
+	const hostWith = (peers: PeerRecord[]) =>
+		({
+			bus: {
+				started: true,
+				owner: OWNER,
+				resolve: (selector: string) => peers.filter((item) => `label:spawn=${item.labels["spawn"]}` === selector),
+			},
+		}) as unknown as AgentsHost;
+	const record = (spawnId: string, fields: Partial<ChildRecord> = {}) =>
+		({ spawnId, launchedAt: Date.now(), launchedBy: OWNER, ...fields }) as ChildRecord;
+
+	it("counts a child that is starting or on the bus", () => {
+		const host = hostWith([peer("live", "i-live"), peer("moved", "i-new")]);
+		expect(isActiveChild(host, record("new"), new Set())).toBe(true);
+		expect(isActiveChild(host, record("live", { instanceId: "i-live" }), new Set())).toBe(true);
+		expect(isActiveChild(host, record("moved", { instanceId: "i-old" }), new Set())).toBe(true);
+	});
+
+	it("skips a child that exited or never joined the bus", () => {
+		const host = hostWith([]);
+		expect(isActiveChild(host, record("gone", { instanceId: "i-gone" }), new Set())).toBe(false);
+		expect(isActiveChild(host, record("failed", { launchedAt: 0 }), new Set())).toBe(false);
+	});
+
+	it("skips a child whose endpoint left while its presence is still listed", () => {
+		const host = hostWith([peer("leaving", "i-leaving")]);
+		expect(isActiveChild(host, record("leaving", { instanceId: "i-leaving" }), new Set(["i-leaving"]))).toBe(false);
 	});
 });

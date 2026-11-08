@@ -82,7 +82,24 @@ declare module "../../core/services.ts" {
 declare module "../../core/events.ts" {
 	interface PimonEvents {
 		"timers:changed": { sessionId: string };
+		"background:counts": BackgroundCounts;
 	}
+}
+
+/** Running jobs of this process by kind, shell and script, and the armed timers of the current session. */
+export interface BackgroundCounts {
+	background: number;
+	monitor: number;
+	timers: number;
+}
+
+export function backgroundCounts(reg: Registry, timers: TimerStore): BackgroundCounts {
+	const jobs = activeJobs(reg);
+	return {
+		background: jobs.filter((state) => state.options.kind === "background").length,
+		monitor: jobs.filter((state) => state.options.kind === "monitor").length,
+		timers: timers.sessionId === undefined ? 0 : armedTimers(timers, timers.sessionId).length,
+	};
 }
 
 interface LogsResult {
@@ -119,7 +136,21 @@ export const background = defineFeature({
 		reg.emit = (state, text) => deliver((message) => ctx.wake(message), reg, state, text);
 		const timers = ctx.reloadState("timers", 1, createTimerStore);
 		const wakeTimer = (message: TimerWake) => ctx.wake(message);
-		const timersChanged = (sessionId: string) => ctx.events.emit("timers:changed", { sessionId });
+		let lastCounts: string | undefined;
+		const publishCounts = () => {
+			const counts = backgroundCounts(reg, timers);
+			const key = `${counts.background}/${counts.monitor}/${counts.timers}`;
+			if (key === lastCounts) return;
+			lastCounts = key;
+			ctx.events.emit("background:counts", counts);
+		};
+		reg.changed = publishCounts;
+		// A job kept from an earlier runtime can end through code that does not call `changed`.
+		for (const state of reg.active.values()) void state.exited.then(() => reg.changed?.());
+		const timersChanged = (sessionId: string) => {
+			ctx.events.emit("timers:changed", { sessionId });
+			publishCounts();
+		};
 		timers.wake = wakeTimer;
 		timers.changed = timersChanged;
 
@@ -159,6 +190,9 @@ export const background = defineFeature({
 			bindTimers(timers, extensionCtx);
 			timers.wake = wakeTimer;
 			timers.changed = timersChanged;
+			reg.changed = publishCounts;
+			lastCounts = undefined;
+			publishCounts();
 			// Without a UI, this report and digests from another session are dropped: such a session has no
 			// place to show them, and `background list` shows orphans.
 			const notify = (text: string, level: "info" | "warning") => {
@@ -193,6 +227,7 @@ export const background = defineFeature({
 				// A reload keeps the session. Without host bindings pi skips session_start after it.
 				if (event.reason !== "reload") timers.sessionId = undefined;
 			}
+			if (reg.changed === publishCounts) reg.changed = undefined;
 			// Reload and session replacement keep jobs on purpose: killing a test suite
 			// because the user typed /reload is a worse failure than an orphan.
 			if (event.reason !== "quit") return;

@@ -30,6 +30,9 @@ export class ChildRecords {
 
 	readonly paths: AgentPaths;
 
+	/** Called after a record was saved or forgotten. */
+	onChange: (() => void) | undefined;
+
 	constructor(paths: AgentPaths) {
 		this.paths = paths;
 	}
@@ -47,6 +50,8 @@ export class ChildRecords {
 		} catch (error) {
 			this.unsaved.set(record.spawnId, record);
 			throw new Error(`Unable to persist child state at ${this.file(record.spawnId)}: ${(error as Error).message}`);
+		} finally {
+			this.onChange?.();
 		}
 	}
 
@@ -89,5 +94,6 @@ export class ChildRecords {
 		]) {
 			rmSync(path, { force: true });
 		}
+		this.onChange?.();
 	}
 }

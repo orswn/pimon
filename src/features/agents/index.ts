@@ -22,10 +22,18 @@ import {
 	type AgentsToolInput,
 	agentsToolSchema,
 	cleanupGoneChild,
+	isActiveChild,
 	pruneFiles,
 	rewatchChildren,
 	runToolAction,
 } from "./tool.ts";
+
+declare module "../../core/events.ts" {
+	interface PimonEvents {
+		/** Children of this bus owner that are not confirmed gone. */
+		"agents:counts": { active: number };
+	}
+}
 
 interface AgentsFeatureOptions {
 	/** Defaults to Herdr through the process runner. */
@@ -73,6 +81,20 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				},
 			};
 
+			// A record can outlive its child, so only children that are starting or on the bus count.
+			const leftEndpoints = new Set<string>();
+			let lastActive: number | undefined;
+			const publishActive = (always = false) => {
+				const children = bus.started ? host.records.mine(bus.owner) : [];
+				const known = new Set(children.map((record) => record.instanceId));
+				for (const id of leftEndpoints) if (!known.has(id)) leftEndpoints.delete(id);
+				const active = children.filter((record) => isActiveChild(host, record, leftEndpoints)).length;
+				if (!always && active === lastActive) return;
+				lastActive = active;
+				ctx.events.emit("agents:counts", { active });
+			};
+			host.records.onChange = () => publishActive();
+
 			const child = ctx.reloadState("child", 1, newChildState);
 			loadSpawnFile(child, bus.launch, ctx.log);
 			let source: SpawnSource | undefined;
@@ -103,21 +125,32 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				description: AGENTS_TOOL_DESCRIPTION,
 				parameters: agentsToolSchema,
 				async execute(toolCallId, params, signal, _onUpdate, extCtx) {
-					const result = await runToolAction(host, extCtx, params as AgentsToolInput, toolCallId, signal);
-					return { content: [{ type: "text", text: result.text }], details: result.details };
+					try {
+						const result = await runToolAction(host, extCtx, params as AgentsToolInput, toolCallId, signal);
+						return { content: [{ type: "text", text: result.text }], details: result.details };
+					} finally {
+						// A spawn ends after its wait for the child.
+						publishActive();
+					}
 				},
 			});
 			registerCommands(ctx.pi, () => host);
 
 			bus.onPeerGone((event) => {
+				leftEndpoints.add(event.record.instanceId);
+				publishActive();
 				cleanupGoneChild(host, event).catch((error: unknown) => ctx.log.error("child cleanup failed", error));
 			});
-			bus.onReady(() => rewatchChildren(host));
+			bus.onReady(() => {
+				rewatchChildren(host);
+				publishActive();
+			});
 
 			ctx.onSessionStart((event, extCtx) => {
 				source = spawnSource(child, extCtx, bus.launch);
 				pendingTask = startChildSession(ctx.pi, child, source, bus.launch, event);
 				rewatchChildren(host);
+				publishActive(true);
 			});
 			// The task waits for the render and for the parent's placement. The render puts the role and delegated sections in the first request.
 			ctx.events.on("pimon:session-ready", () => {

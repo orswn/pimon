@@ -14,8 +14,28 @@ export interface BusIdentity {
 export function busSegment(bus: BusIdentity | undefined, theme: ThemeLike): string | undefined {
 	if (!bus?.name) return undefined;
 	const label = bus.role && bus.role !== bus.name ? `${bus.name}:${bus.role}` : bus.name;
-	// TODO(okka): bring back a reliable view of children, unread, and pending bus work.
+	// TODO(okka): bring back a reliable view of unread and pending bus work.
 	return theme.fg("muted", label);
+}
+
+/** A count is undefined while its feature has not published, so a disabled feature shows no letter. */
+export interface WorkCounts {
+	agents?: number | undefined;
+	background?: number | undefined;
+	monitor?: number | undefined;
+	timers?: number | undefined;
+}
+
+export function countsSegment(counts: WorkCounts, theme: ThemeLike): string | undefined {
+	const items: string[] = [];
+	const add = (letter: string, count: number | undefined) => {
+		if (count !== undefined) items.push(theme.fg(count > 0 ? "accent" : "dim", `${letter}:${count}`));
+	};
+	add("A", counts.agents);
+	add("B", counts.background);
+	add("M", counts.monitor);
+	add("T", counts.timers);
+	return items.length > 0 ? items.join(" ") : undefined;
 }
 
 export interface GoalIndicator {
@@ -86,6 +106,7 @@ export function usageColor(percent: number): "error" | "warning" | "success" {
 
 export interface LineParts {
 	loc: string;
+	counts?: string | undefined;
 	model: string;
 	context: string;
 	bus?: string | undefined;
@@ -104,7 +125,7 @@ export function footerWidth(text: string): number {
 }
 
 // Narrow terminals drop the least important segment first, instead of truncating the model and context away.
-const DROP_ORDER = ["bus", "limits", "cost", "goal"] as const;
+const DROP_ORDER = ["counts", "bus", "limits", "cost", "goal"] as const;
 
 export function layoutLine(parts: LineParts, width: number, theme: ThemeLike): string {
 	const compose = (drop: number) => {
@@ -118,11 +139,12 @@ export function layoutLine(parts: LineParts, width: number, theme: ThemeLike): s
 		]
 			.filter(Boolean)
 			.join(theme.fg("dim", SEP));
-		return { right, used: footerWidth(parts.loc) + footerWidth(right) };
+		const left = [parts.loc, show("counts")].filter(Boolean).join(theme.fg("dim", SEP));
+		return { left, right, used: footerWidth(left) + footerWidth(right) };
 	};
 	let drop = 0;
 	let line = compose(drop);
 	while (line.used >= width && drop < DROP_ORDER.length) line = compose(++drop);
 	const gap = " ".repeat(Math.max(1, width - line.used));
-	return truncateToWidth(parts.loc + gap + line.right, width, "");
+	return truncateToWidth(line.left + gap + line.right, width, "");
 }
