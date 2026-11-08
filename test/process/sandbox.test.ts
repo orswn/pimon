@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { readFileSync, statSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { describe, expect, it } from "vite-plus/test";
 import { STUBBED_COMMANDS } from "../support/sandbox.ts";
 
@@ -12,6 +12,11 @@ describe("test sandbox", () => {
 		expect(homedir().startsWith(sandbox)).toBe(true);
 		expect(process.env["XDG_RUNTIME_DIR"]?.startsWith(sandbox)).toBe(true);
 		expect(process.env["PI_CODING_AGENT_DIR"]?.startsWith(sandbox)).toBe(true);
+	});
+
+	it("points the temp dir into the sandbox with mode 700", () => {
+		expect(tmpdir().startsWith(`${sandbox}/`)).toBe(true);
+		expect(statSync(tmpdir()).mode & 0o777).toBe(0o700);
 	});
 
 	it("removes the environment that reaches a live pi or terminal", () => {

@@ -46,15 +46,19 @@ export interface Sandbox {
 }
 
 export function createSandbox(): Sandbox {
-	const root = mkdtempSync(join(tmpdir(), "pimon-test-"));
+	// globalSetup runs once per test project in one process. Without this, each root nests in the previous TMPDIR and socket paths overflow.
+	const base = process.env["PIMON_TEST_OUTER_TMPDIR"] ?? tmpdir();
+	const root = mkdtempSync(join(base, "pimon-test-"));
 	const bin = join(root, "bin");
 	const home = join(root, "home");
 	const runtime = join(root, "runtime");
 	const agent = join(root, "agent");
+	const temp = join(root, "tmp");
 	mkdirSync(bin);
 	mkdirSync(home);
 	mkdirSync(runtime, { mode: 0o700 });
 	mkdirSync(agent);
+	mkdirSync(temp, { mode: 0o700 });
 	const stub = resolve(import.meta.dirname, "bin", "stub");
 	chmodSync(stub, 0o755);
 	for (const command of STUBBED_COMMANDS) symlinkSync(stub, join(bin, command));
@@ -62,11 +66,13 @@ export function createSandbox(): Sandbox {
 		root,
 		env: {
 			PIMON_TEST_SANDBOX: root,
+			PIMON_TEST_OUTER_TMPDIR: base,
 			PIMON_TEST_STUB_LOG: join(root, "stub-calls.log"),
 			PATH: `${bin}:${process.env["PATH"] ?? ""}`,
 			HOME: home,
 			XDG_RUNTIME_DIR: runtime,
 			PI_CODING_AGENT_DIR: agent,
+			TMPDIR: temp,
 		},
 		dispose: () => rmSync(root, { recursive: true, force: true }),
 	};
