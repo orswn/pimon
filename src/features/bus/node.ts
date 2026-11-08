@@ -405,10 +405,12 @@ export class BusNode {
 		}
 	}
 
+	/** Writes presence only on a state change. The heartbeat and ping carry a new activity. */
 	setState(state: PeerState, activity?: string): void {
+		const changed = state !== this.state;
 		this.state = state;
 		this.activity = activity;
-		if (!this.stopped) this.beat();
+		if (changed && !this.stopped) this.beat();
 	}
 
 	subscribe(topic: string): void {
