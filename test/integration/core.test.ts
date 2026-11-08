@@ -1,4 +1,5 @@
 import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { defineFeature } from "../../src/core/feature.ts";
@@ -22,6 +23,18 @@ const probe = defineFeature({
 
 function systemMessages(messages: Message[]) {
 	return messages.filter((message) => message.role === "system");
+}
+
+/** The sections the model has after the first system message and its later patches. */
+function liveSections(messages: Message[]): Record<string, string> {
+	const live: Record<string, string> = {};
+	for (const message of systemMessages(messages)) {
+		for (const [name, text] of Object.entries(message.sections ?? {})) {
+			if (text === null) delete live[name];
+			else live[name] = text;
+		}
+	}
+	return live;
 }
 
 describe("pimon core in a real AgentSession", () => {
@@ -57,41 +70,63 @@ describe("pimon core in a real AgentSession", () => {
 		expect(systemMessages(second ?? [])).toHaveLength(1);
 	});
 
-	it("renders a tool-gated section only when a required tool is active at first render", async () => {
+	it("applies a tool-gated section only while a required tool is active", async () => {
+		let pi: ExtensionAPI | undefined;
 		const gated = defineFeature({
 			id: "gated",
 			description: "test feature with tool-gated sections",
 			defaultEnabled: true,
 			setup(ctx) {
+				pi = ctx.pi;
 				ctx.promptSection({ name: "with_echo", requiresTools: ["probe_echo"], render: () => "Echo rules." });
 				ctx.promptSection({ name: "with_missing", requiresTools: ["no_such_tool"], render: () => "Missing." });
-				ctx.onSessionStart(() => {
-					if (process.env["PIMON_TEST_DROP_ECHO"] === "1")
-						ctx.pi.setActiveTools(ctx.pi.getActiveTools().filter((name) => name !== "probe_echo"));
-				});
 			},
 		});
-		const sectionsOf = async () => {
-			harness = await createHarness({ features: [probe, gated] });
-			harness.respond([fauxAssistantMessage(fauxText("one"))]);
-			await harness.session.prompt("first");
-			const names = Object.keys(systemMessages(harness.requests[0] ?? [])[0]?.sections ?? {});
-			harness.dispose();
-			harness = undefined;
-			return names;
-		};
+		harness = await createHarness({ features: [probe, gated] });
+		harness.respond([
+			fauxAssistantMessage(fauxText("one")),
+			fauxAssistantMessage(fauxText("two")),
+			fauxAssistantMessage(fauxText("three")),
+		]);
+		const sectionsOf = (index: number) => liveSections(harness?.requests[index] ?? []);
 
-		const active = await sectionsOf();
-		expect(active).toContain("with_echo");
-		expect(active).not.toContain("with_missing");
+		await harness.session.prompt("first");
+		const all = pi?.getActiveTools() ?? [];
+		pi?.setActiveTools(all.filter((name) => name !== "probe_echo"));
+		await harness.session.prompt("second");
+		pi?.setActiveTools(all);
+		await harness.session.prompt("third");
 
-		process.env["PIMON_TEST_DROP_ECHO"] = "1";
-		try {
-			const inactive = await sectionsOf();
-			expect(inactive).not.toContain("with_echo");
-			expect(inactive).toContain("probe_rules");
-		} finally {
-			delete process.env["PIMON_TEST_DROP_ECHO"];
-		}
+		expect(Object.keys(sectionsOf(0))).toContain("with_echo");
+		expect(Object.keys(sectionsOf(0))).not.toContain("with_missing");
+		expect(Object.keys(sectionsOf(1))).not.toContain("with_echo");
+		expect(Object.keys(sectionsOf(1))).toContain("probe_rules");
+		expect(sectionsOf(2)["with_echo"]).toBe(sectionsOf(0)["with_echo"]);
+		expect(sectionsOf(2)["with_echo"]).toBe("<with_echo>\nEcho rules.\n</with_echo>");
+	});
+
+	it("adds a section when its tool becomes active after session start", async () => {
+		let pi: ExtensionAPI | undefined;
+		const gated = defineFeature({
+			id: "gated",
+			description: "test feature that drops its tool at session start",
+			defaultEnabled: true,
+			setup(ctx) {
+				pi = ctx.pi;
+				ctx.promptSection({ name: "with_echo", requiresTools: ["probe_echo"], render: () => "Echo rules." });
+				ctx.onSessionStart(() =>
+					ctx.pi.setActiveTools(ctx.pi.getActiveTools().filter((name) => name !== "probe_echo")),
+				);
+			},
+		});
+		harness = await createHarness({ features: [probe, gated] });
+		harness.respond([fauxAssistantMessage(fauxText("one")), fauxAssistantMessage(fauxText("two"))]);
+		await harness.session.prompt("first");
+		pi?.setActiveTools([...(pi?.getActiveTools() ?? []), "probe_echo"]);
+		await harness.session.prompt("second");
+
+		const sectionsOf = (index: number) => liveSections(harness?.requests[index] ?? []);
+		expect(Object.keys(sectionsOf(0))).not.toContain("with_echo");
+		expect(sectionsOf(1)["with_echo"]).toBe("<with_echo>\nEcho rules.\n</with_echo>");
 	});
 });

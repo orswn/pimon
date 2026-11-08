@@ -4,15 +4,17 @@ import type { FeatureId, PromptInput, PromptSection } from "./feature.ts";
 const SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
 const RESERVED = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"]);
 
-interface RenderedSection {
+export interface RenderedSection {
 	name: string;
 	feature: FeatureId;
 	text: string;
+	requiresTools: readonly string[] | undefined;
 }
 
 /**
  * Prompt sections are rendered once per session and then reused byte for byte.
  * A section that changed between turns would cost a prompt cache miss on every change.
+ * Only the choice of sections follows the active tools. A dropped or re-added section goes in the same system update as the tool change, so it adds no cache miss.
  */
 export class PromptRegistry {
 	private readonly entries: { feature: FeatureId; section: PromptSection }[] = [];
@@ -27,32 +29,29 @@ export class PromptRegistry {
 		this.entries.push({ feature, section });
 	}
 
-	render(
-		input: PromptInput,
-		onError: (feature: FeatureId, error: unknown) => void,
-		activeTools: ReadonlySet<string> = new Set(),
-	): readonly RenderedSection[] {
+	render(input: PromptInput, onError: (feature: FeatureId, error: unknown) => void): void {
 		const rendered: RenderedSection[] = [];
 		for (const { feature, section } of this.entries) {
 			if (!input.enabledFeatures.has(feature)) continue;
-			if (section.requiresTools && !section.requiresTools.some((tool) => activeTools.has(tool))) continue;
 			try {
 				const text = section.render(input)?.trim();
-				if (text) rendered.push({ name: section.name, feature, text });
+				if (text) rendered.push({ name: section.name, feature, text, requiresTools: section.requiresTools });
 			} catch (error) {
 				onError(feature, error);
 			}
 		}
 		this.rendered = Object.freeze(rendered);
-		return this.rendered;
 	}
 
-	apply(options: BuildSystemPromptOptions): void {
+	apply(options: BuildSystemPromptOptions, activeTools: ReadonlySet<string>): void {
 		options.sections ??= {};
-		for (const { name, text } of this.rendered) options.sections[name] = text;
+		for (const { name, text } of this.current(activeTools)) options.sections[name] = text;
 	}
 
-	current(): readonly RenderedSection[] {
-		return this.rendered;
+	/** Sections whose required tools include at least one active tool. */
+	current(activeTools: ReadonlySet<string>): readonly RenderedSection[] {
+		return this.rendered.filter(
+			(section) => !section.requiresTools || section.requiresTools.some((tool) => activeTools.has(tool)),
+		);
 	}
 }

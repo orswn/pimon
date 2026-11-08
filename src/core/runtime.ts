@@ -15,7 +15,7 @@ import type {
 	SessionShutdownHandler,
 	SessionStartHandler,
 } from "./feature.ts";
-import { PromptRegistry } from "./prompt.ts";
+import { PromptRegistry, type RenderedSection } from "./prompt.ts";
 import { reloadSlot } from "./reload-state.ts";
 import type { ServiceMap } from "./services.ts";
 import { createWakeGate } from "./wake.ts";
@@ -172,10 +172,8 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	const renderPrompts = (cwd: string) => {
 		if (promptsRendered) return;
 		promptsRendered = true;
-		prompts.render(
-			{ cwd, enabledFeatures: enabled() },
-			(feature, error) => report(feature, "error", "prompt section failed to render", error),
-			new Set(pi.getActiveTools()),
+		prompts.render({ cwd, enabledFeatures: enabled() }, (feature, error) =>
+			report(feature, "error", "prompt section failed to render", error),
 		);
 	};
 
@@ -208,7 +206,7 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	pi.on("before_agent_start", (event, ctx) => {
 		lastCtx = ctx;
 		renderPrompts(ctx.cwd);
-		prompts.apply(event.systemPromptOptions);
+		prompts.apply(event.systemPromptOptions, new Set(pi.getActiveTools()));
 	});
 
 	// These handlers return nothing, so they never cancel or replace a compaction or tree summary.
@@ -245,7 +243,8 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	pi.registerCommand("pimon", {
 		description: "Show pimon feature status and diagnostics",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(renderStatus([...statuses.values()], diagnostics, prompts), "info");
+			const sections = prompts.current(new Set(pi.getActiveTools()));
+			ctx.ui.notify(renderStatus([...statuses.values()], diagnostics, sections), "info");
 		},
 	});
 
@@ -286,16 +285,16 @@ function orderByDependencies(
 function renderStatus(
 	statuses: readonly FeatureStatus[],
 	diagnostics: readonly Diagnostic[],
-	prompts: PromptRegistry,
+	sections: readonly RenderedSection[],
 ): string {
 	const lines = statuses.map((status) =>
 		status.state === "enabled" ? `${status.id}: enabled` : `${status.id}: ${status.state} (${status.reason})`,
 	);
 	if (statuses.length === 0) lines.push("no features");
-	const sections = prompts
-		.current()
-		.map((section) => `<${section.name}> ${section.text.length} chars from ${section.feature}`);
-	if (sections.length > 0) lines.push("", "Prompt sections:", ...sections);
+	const sectionLines = sections.map(
+		(section) => `<${section.name}> ${section.text.length} chars from ${section.feature}`,
+	);
+	if (sectionLines.length > 0) lines.push("", "Prompt sections:", ...sectionLines);
 	if (diagnostics.length > 0)
 		lines.push("", "Diagnostics:", ...diagnostics.map((d) => `${d.level} ${d.feature}: ${d.message}`));
 	return lines.join("\n");

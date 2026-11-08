@@ -38,7 +38,9 @@ describe("tool names in prompt sections", () => {
 		harness.respond([fauxAssistantMessage(fauxText("ok"))]);
 		await harness.session.prompt("hi");
 		const system = harness.requests[0]?.find((message) => message.role === "system");
-		const ours = new Set(harness.runtime.prompts.current().map((section) => section.name));
+		const ours = new Set(
+			harness.runtime.prompts.current(new Set(harness.session.getActiveToolNames())).map((section) => section.name),
+		);
 		const texts = Object.entries(system?.sections ?? {})
 			.filter(([name]) => ours.has(name))
 			.map(([, text]) => text ?? "");

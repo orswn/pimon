@@ -235,7 +235,9 @@ describe("agents feature", () => {
 			const h = await start({ responses: [fauxAssistantMessage(fauxText("on it"))] });
 			await h.waitForRequests(1);
 			const rendered = sections(h.requests[0]);
-			const ours = h.runtime.prompts.current().map((section) => rendered[section.name] ?? "");
+			const ours = h.runtime.prompts
+				.current(new Set(h.session.getActiveToolNames()))
+				.map((section) => rendered[section.name] ?? "");
 			expect(Object.keys(rendered)).toEqual(expect.arrayContaining(["agents", "bus", "role", "delegated"]));
 			const all = ours.flatMap(bullets);
 			expect(all.filter((line, index) => all.indexOf(line) !== index)).toEqual([]);

@@ -16,9 +16,13 @@ describe("rendered prompt sections", () => {
 		await harness.session.prompt("hi");
 		const system = harness.requests[0]?.find((message) => message.role === "system");
 		const ours = Object.entries(system?.sections ?? {}).filter(([name]) =>
-			harness?.runtime.prompts.current().some((section) => section.name === name),
+			harness?.runtime.prompts
+				.current(new Set(harness.session.getActiveToolNames()))
+				.some((section) => section.name === name),
 		);
-		expect(ours.map(([name]) => name)).toEqual(harness.runtime.prompts.current().map((section) => section.name));
+		expect(ours.map(([name]) => name)).toEqual(
+			harness.runtime.prompts.current(new Set(harness.session.getActiveToolNames())).map((section) => section.name),
+		);
 		await expect(ours.map(([, text]) => text).join("\n\n")).toMatchFileSnapshot("__snapshots__/prompt-sections.md");
 		expect(harness.runtime.diagnostics()).toEqual([]);
 	});

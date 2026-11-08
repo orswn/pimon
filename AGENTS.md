@@ -37,10 +37,10 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Add model guidance with `ctx.promptSection`. Never return `systemPrompt` from `before_agent_start`.
 - A section's text depends only on:
   - its `PromptInput`,
-  - the active tools at the first render (`requiresTools`),
   - state that a feature fixes before the first render and never changes for that runtime.
 - No time, counters, job lists, or other live state in section text.
 - Sections render once per runtime, after all `onSessionStart` handlers. Later tool changes do not re-render them.
+- `requiresTools` chooses at each run if a section is sent. It never changes the text.
 - Never change tool names, descriptions, or schemas after load.
 - Live state reaches the model through tool results or custom messages, never through the system prompt.
 - Each change to prompt text or tool text updates the snapshot test in the same commit.
