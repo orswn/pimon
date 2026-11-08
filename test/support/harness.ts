@@ -34,6 +34,8 @@ export interface Harness {
 	requests: Message[][];
 	extensionErrors: string[];
 	notifications: { message: string; level: string | undefined }[];
+	/** Notices shown through the UI context. Empty without `ui`. */
+	uiNotices: string[];
 	respond(steps: FauxResponseStep[]): void;
 	/** Resolves once the model has received at least `count` requests, then waits for the session to go idle. */
 	waitForRequests(count: number, timeoutMs?: number): Promise<void>;
@@ -77,10 +79,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function recordingUI(
 	notifications: Harness["notifications"],
+	uiNotices: string[],
 	overrides: Partial<ExtensionUIContext>,
 ): ExtensionUIContext {
 	const base: Partial<ExtensionUIContext> = {
-		notify: (message, level) => notifications.push({ message, level }),
+		notify: (message, level) => {
+			notifications.push({ message, level });
+			uiNotices.push(message);
+		},
+		onTerminalInput: () => () => {},
 		custom: async () => undefined as never,
 		getEditorText: () => "",
 		...overrides,
@@ -149,12 +156,23 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 	});
 	const extensionErrors: string[] = [];
 	const notifications: Harness["notifications"] = [];
+	const uiNotices: string[] = [];
 	await session.bindExtensions({
 		...(options.hostBindings === false
 			? {}
-			: { onError: (error) => extensionErrors.push(`${error.extensionPath} ${error.event}: ${error.error}`) }),
+			: {
+					onError: (error) => extensionErrors.push(`${error.extensionPath} ${error.event}: ${error.error}`),
+					commandContextActions: {
+						waitForIdle: () => session.waitForIdle(),
+						newSession: async () => ({ cancelled: true }),
+						fork: async () => ({ cancelled: true }),
+						navigateTree: async () => ({ cancelled: true }),
+						switchSession: async () => ({ cancelled: true }),
+						reload: async () => await session.reload(),
+					},
+				}),
 		...(options.mode ? { mode: options.mode } : {}),
-		...(options.ui ? { uiContext: recordingUI(notifications, options.ui) } : {}),
+		...(options.ui ? { uiContext: recordingUI(notifications, uiNotices, options.ui) } : {}),
 	});
 	if (!runtime) throw new Error("pimon factory did not run");
 
@@ -168,6 +186,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 		requests,
 		extensionErrors,
 		notifications,
+		uiNotices,
 		respond(steps) {
 			faux.setResponses(
 				steps.map((step) =>
