@@ -27,10 +27,15 @@ export class PromptRegistry {
 		this.entries.push({ feature, section });
 	}
 
-	render(input: PromptInput, onError: (feature: FeatureId, error: unknown) => void): readonly RenderedSection[] {
+	render(
+		input: PromptInput,
+		onError: (feature: FeatureId, error: unknown) => void,
+		activeTools: ReadonlySet<string> = new Set(),
+	): readonly RenderedSection[] {
 		const rendered: RenderedSection[] = [];
 		for (const { feature, section } of this.entries) {
 			if (!input.enabledFeatures.has(feature)) continue;
+			if (section.requiresTools && !section.requiresTools.some((tool) => activeTools.has(tool))) continue;
 			try {
 				const text = section.render(input)?.trim();
 				if (text) rendered.push({ name: section.name, feature, text });

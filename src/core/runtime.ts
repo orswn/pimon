@@ -141,8 +141,10 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 	const renderPrompts = (cwd: string) => {
 		if (promptsRendered) return;
 		promptsRendered = true;
-		prompts.render({ cwd, enabledFeatures: enabled() }, (feature, error) =>
-			report(feature, "error", "prompt section failed to render", error),
+		prompts.render(
+			{ cwd, enabledFeatures: enabled() },
+			(feature, error) => report(feature, "error", "prompt section failed to render", error),
+			new Set(pi.getActiveTools()),
 		);
 	};
 

@@ -19,6 +19,8 @@ export interface PromptInput {
 export interface PromptSection {
 	/** Tag name of the section. Lower case letters, digits, `_` and `-`. */
 	name: string;
+	/** Render only when one of these tools is active at the first render. Later tool changes do not re-render. */
+	requiresTools?: readonly string[];
 	/** Must return the same text for the same input. Called once per session start. */
 	render(input: PromptInput): string | undefined;
 }

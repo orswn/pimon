@@ -56,4 +56,42 @@ describe("pimon core in a real AgentSession", () => {
 		expect(head[0]?.sections?.["probe_rules"]).toBe(`<probe_rules>\nProbe rules for ${harness.cwd}.\n</probe_rules>`);
 		expect(systemMessages(second ?? [])).toHaveLength(1);
 	});
+
+	it("renders a tool-gated section only when a required tool is active at first render", async () => {
+		const gated = defineFeature({
+			id: "gated",
+			description: "test feature with tool-gated sections",
+			defaultEnabled: true,
+			setup(ctx) {
+				ctx.promptSection({ name: "with_echo", requiresTools: ["probe_echo"], render: () => "Echo rules." });
+				ctx.promptSection({ name: "with_missing", requiresTools: ["no_such_tool"], render: () => "Missing." });
+				ctx.onSessionStart(() => {
+					if (process.env["PIMON_TEST_DROP_ECHO"] === "1")
+						ctx.pi.setActiveTools(ctx.pi.getActiveTools().filter((name) => name !== "probe_echo"));
+				});
+			},
+		});
+		const sectionsOf = async () => {
+			harness = await createHarness({ features: [probe, gated] });
+			harness.respond([fauxAssistantMessage(fauxText("one"))]);
+			await harness.session.prompt("first");
+			const names = Object.keys(systemMessages(harness.requests[0] ?? [])[0]?.sections ?? {});
+			harness.dispose();
+			harness = undefined;
+			return names;
+		};
+
+		const active = await sectionsOf();
+		expect(active).toContain("with_echo");
+		expect(active).not.toContain("with_missing");
+
+		process.env["PIMON_TEST_DROP_ECHO"] = "1";
+		try {
+			const inactive = await sectionsOf();
+			expect(inactive).not.toContain("with_echo");
+			expect(inactive).toContain("probe_rules");
+		} finally {
+			delete process.env["PIMON_TEST_DROP_ECHO"];
+		}
+	});
 });

@@ -37,6 +37,15 @@ describe("PromptRegistry", () => {
 		expect(errors).toEqual(["a"]);
 	});
 
+	it("skips a section when none of its required tools is active", () => {
+		const registry = new PromptRegistry();
+		registry.add("a", { name: "needs_x", requiresTools: ["x"], render: () => "X" });
+		registry.add("a", { name: "needs_y_or_z", requiresTools: ["y", "z"], render: () => "YZ" });
+		registry.add("a", { name: "plain", render: () => "P" });
+		const rendered = registry.render(input(["a"]), () => {}, new Set(["z"]));
+		expect(rendered.map((section) => section.name)).toEqual(["needs_y_or_z", "plain"]);
+	});
+
 	it("applies the same text on every call", () => {
 		const registry = new PromptRegistry();
 		let calls = 0;
