@@ -8,6 +8,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - README documents every feature, option, tool, command, environment name, and file, the git install source, and what semantic versioning covers.
 - `background` start waits up to `inlineWaitMs` (default 5000 ms) and returns the exit digest of a job that ends in that time. No wake is sent for such a job.
+- `pimon.json` `tools` turns single pimon tools off. A tool that is off is not registered, and a prompt section that needs only tools that are off is left out. pimon warns when a tool that is on needs a tool that is off.
 
 ### Changed
 

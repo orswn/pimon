@@ -21,6 +21,9 @@ Optional file: `~/.pi/agent/pimon.json`.
 	"features": {
 		"vi": false,
 		"background": { "enabled": true }
+	},
+	"tools": {
+		"background_codemode": false
 	}
 }
 ```
@@ -29,6 +32,12 @@ Optional file: `~/.pi/agent/pimon.json`.
 - An object can set `enabled` and the feature's options.
 - An invalid or unknown option shows an error and turns that feature off.
 - An unknown feature shows a warning.
+- `tools` turns single pimon tools off. `"<tool>": false` keeps that tool out of every request.
+  - A missing entry or `true` keeps the tool on.
+  - A prompt section that needs only tools that are off is left out.
+  - A value that is not `true` or `false` shows an error.
+  - A name that no enabled feature registers shows a warning.
+  - A tool that is off but needed shows a warning: `pi_agents` needs `pi_bus`, `goal_done` needs `timer` and `notify`, the `goal` feature needs `goal_done`, and each codemode job tool needs its shell tool.
 - A feature is off when a feature in its `Needs` list is off.
 - Run `/pimon` to see feature status, prompt sections, and diagnostics.
 
@@ -195,7 +204,7 @@ pimon writes these paths:
 From 1.0.0, SemVer covers these surfaces:
 
 - Tool names and parameters.
-- `pimon.json` features and options.
+- `pimon.json` features, options, and `tools`.
 - `dynamicDiscovery` in `models.json`.
 - Commands.
 - Environment names that pimon reads or sets, except `PI_BUS_DEBUG`. Names that other programs own are not covered.

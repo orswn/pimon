@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { statusline } from "../features/statusline/index.ts";
 import { vi } from "../features/vi/index.ts";
-import { loadConfigFile, planFeature } from "./config.ts";
+import { loadConfigFile, planFeature, toolNeedWarnings } from "./config.ts";
 import { defineFeature } from "./feature.ts";
 
 const plain = defineFeature({ id: "plain", description: "", defaultEnabled: true, setup: () => undefined });
@@ -59,6 +59,50 @@ describe("planFeature", () => {
 	});
 });
 
+describe("toolNeedWarnings", () => {
+	const all = [
+		"pi_agents",
+		"pi_bus",
+		"goal_done",
+		"timer",
+		"notify",
+		"background",
+		"monitor",
+		"background_codemode",
+		"monitor_codemode",
+	];
+	const warn = (off: string[], features: string[] = []) => {
+		const switches = Object.fromEntries(off.map((name) => [name, false]));
+		const registered = new Set(all.filter((name) => !off.includes(name)));
+		return toolNeedWarnings(switches, registered, new Set(features));
+	};
+
+	it("warns when pi_agents is on and pi_bus is off", () => {
+		expect(warn(["pi_bus"])).toEqual(["tools.pi_bus is off, but pi_agents needs it"]);
+	});
+
+	it("warns when goal_done is on and timer or notify is off", () => {
+		expect(warn(["timer"])).toEqual(["tools.timer is off, but goal_done needs it"]);
+		expect(warn(["notify"])).toEqual(["tools.notify is off, but goal_done needs it"]);
+	});
+
+	it("warns when the goal feature is on and goal_done is off", () => {
+		expect(warn(["goal_done"], ["goal"])).toEqual(["tools.goal_done is off, but goal needs it"]);
+		expect(warn(["goal_done"])).toEqual([]);
+	});
+
+	it("warns when a codemode job tool is on and its shell tool is off", () => {
+		expect(warn(["background"])).toEqual(["tools.background is off, but background_codemode needs it"]);
+		expect(warn(["monitor"])).toEqual(["tools.monitor is off, but monitor_codemode needs it"]);
+	});
+
+	it("does not warn when the tool that needs another is off too", () => {
+		expect(warn(["pi_bus", "pi_agents"])).toEqual([]);
+		expect(warn(["timer", "notify", "goal_done"])).toEqual([]);
+		expect(warn(["background", "background_codemode"])).toEqual([]);
+	});
+});
+
 describe("loadConfigFile", () => {
 	let dir: string | undefined;
 	afterEach(() => {
@@ -78,5 +122,20 @@ describe("loadConfigFile", () => {
 		expect(withFile("{").problems[0]).toContain("is not valid JSON");
 		expect(withFile("[]").problems[0]).toContain("must contain a JSON object");
 		expect(withFile('{"featurs":{}}').problems[0]).toContain('unknown key "featurs"');
+	});
+
+	it("reads a tools object of booleans", () => {
+		const loaded = withFile('{"tools":{"notify":false,"timer":true}}');
+		expect(loaded.problems).toEqual([]);
+		expect(loaded.file.tools).toEqual({ notify: false, timer: true });
+	});
+
+	it("reports a tools value that is not an object or not a boolean", () => {
+		expect(withFile('{"tools":[]}').problems).toEqual([
+			`${dir}/pimon.json: tools must be an object of true or false values`,
+		]);
+		const loaded = withFile('{"tools":{"notify":"off","timer":false}}');
+		expect(loaded.problems).toEqual([`${dir}/pimon.json: tools.notify must be true or false`]);
+		expect(loaded.file.tools).toEqual({ timer: false });
 	});
 });

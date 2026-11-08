@@ -5,7 +5,7 @@ import {
 	getAgentDir,
 	SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { type FeaturePlan, loadConfigFile, planFeature } from "./config.ts";
+import { type FeaturePlan, loadConfigFile, planFeature, toolNeedWarnings } from "./config.ts";
 import { createEventBus } from "./events.ts";
 import type {
 	AnyFeature,
@@ -69,6 +69,21 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 		if (!features.some((feature) => feature.id === id))
 			report("pimon", "warning", `${loaded.path}: unknown feature "${id}"`);
 	}
+	const toolSwitches = loaded.file.tools ?? {};
+	const offeredTools = new Set<string>();
+	const registeredTools = new Set<string>();
+	const switchedPi = new Proxy(pi, {
+		get(target, key) {
+			if (key !== "registerTool") return Reflect.get(target, key, target);
+			const register: ExtensionAPI["registerTool"] = (tool) => {
+				offeredTools.add(tool.name);
+				if (toolSwitches[tool.name] === false) return;
+				registeredTools.add(tool.name);
+				target.registerTool(tool);
+			};
+			return register;
+		},
+	});
 
 	const events = createEventBus((event, error) => report("pimon", "error", `listener for ${event} threw`, error));
 	const services = new Map<FeatureId, unknown>();
@@ -103,7 +118,7 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 		};
 		const ctx: FeatureContext<unknown> = {
 			id: feature.id,
-			pi,
+			pi: switchedPi,
 			config: plan.config,
 			agentDir,
 			events,
@@ -130,8 +145,15 @@ function startRuntime(pi: ExtensionAPI, features: readonly AnyFeature[], agentDi
 		}
 	}
 
+	for (const name of Object.keys(toolSwitches)) {
+		if (!offeredTools.has(name))
+			report("pimon", "warning", `${loaded.path}: tools.${name} is not a tool of an enabled feature`);
+	}
+
 	const enabled = () =>
 		new Set([...statuses.values()].filter((status) => status.state === "enabled").map((status) => status.id));
+	for (const warning of toolNeedWarnings(toolSwitches, registeredTools, enabled()))
+		report("pimon", "warning", `${loaded.path}: ${warning}`);
 
 	let announced = 0;
 	const announce = (ctx: ExtensionContext) => {
