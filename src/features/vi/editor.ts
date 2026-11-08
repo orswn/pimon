@@ -104,6 +104,11 @@ export class ViEditor extends CustomEditor {
 		this.tui.requestRender();
 	}
 
+	override render(width: number): string[] {
+		this.options.cursor?.ensureShown();
+		return super.render(width);
+	}
+
 	protected override renderTopBorder(width: number, hiddenLineCount: number): string {
 		const raw = this.modeValue === "insert" ? " INSERT " : ` NORMAL ${this.parser.label()}`.trimEnd() + " ";
 		const color = this.modeValue === "insert" ? this.options.label?.insert : this.options.label?.normal;

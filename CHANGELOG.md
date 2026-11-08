@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Fixed
+
+- vi: after `/reload`, the hardware cursor shows again, so insert mode shows the bar cursor and normal mode the block. Before, pi hid it after the reload and drew its own block cursor.
+
 ## [1.6.0] - 2026-11-09
 
 ### Added

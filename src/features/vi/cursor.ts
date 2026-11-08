@@ -10,6 +10,8 @@ export interface CursorShape {
 	/** Shows the hardware cursor and remembers the earlier setting. */
 	attach(tui: CursorTui): void;
 	set(mode: "insert" | "normal"): void;
+	/** Shows the hardware cursor again if something hid it while attached. */
+	ensureShown(): void;
 	/** Resets the shape and restores the hardware cursor setting. */
 	restore(): void;
 }
@@ -27,6 +29,10 @@ export function createCursorShape(enabled: boolean): CursorShape {
 		},
 		set(mode) {
 			tui?.terminal.write(mode === "insert" ? BAR : BLOCK);
+		},
+		ensureShown() {
+			// pi applies its showHardwareCursor setting after /reload has built the new editor.
+			if (tui && !tui.getShowHardwareCursor()) tui.setShowHardwareCursor(true);
 		},
 		restore() {
 			if (!tui) return;

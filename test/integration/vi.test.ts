@@ -114,9 +114,23 @@ describe("vi cursor shape", () => {
 		expect(built.hardware()).toBe(false);
 	});
 
+	it("shows the hardware cursor again when pi hides it after a reload", async () => {
+		const s = await start();
+		const built = s.build();
+		// pi applies its showHardwareCursor setting after the new extensions have built the editor.
+		built.tui.setShowHardwareCursor(false);
+		built.editor.render(80);
+		expect(built.hardware()).toBe(true);
+		built.editor.handleInput("\x1b");
+		built.editor.render(80);
+		expect(built.writes).toEqual([BAR, BLOCK]);
+		expect(built.hardware()).toBe(true);
+	});
+
 	it("leaves the cursor alone when cursorShape is off", async () => {
 		const s = await start({ config: { cursorShape: false } });
 		const built = s.build();
+		built.editor.render(80);
 		built.editor.handleInput("\x1b");
 		await s.h.shutdown();
 		expect(built.writes).toEqual([]);
