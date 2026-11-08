@@ -159,6 +159,7 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				if (task === undefined || !child.data || !bus.launch.spawnFile) return;
 				const marker = placedMarkerPath(dirname(bus.launch.spawnFile), child.data.spawnId);
 				const timing = { pollMs: host.timing.placedPollMs, waitMs: host.timing.placedWaitMs };
+				// TODO(okka): a bus wake=now message that arrives before placement can start a run first; hold such wakes until the task is sent.
 				cancelWait = awaitPlacement(marker, timing, () => {
 					cancelWait = undefined;
 					sendTask(ctx.pi, task);
