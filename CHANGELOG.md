@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Fixed
+
+- The statusline no longer makes the prompt editor about 3 times slower on a long prompt.
+
 ## [0.13.0] - 2026-11-08
 
 ### Added

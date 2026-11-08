@@ -94,6 +94,15 @@ export interface LineParts {
 	limits?: string | undefined;
 }
 
+// Early pi-tui visibleWidth calls with chars above U+00FF can leave its ASCII fast path about 3x slower for the
+// process, and the editor measures each line of a long prompt with it. Measure the footer glyphs as ASCII.
+// TODO(okka): drop footerWidth when pi-tui visibleWidth stays fast after non-Latin1 input.
+const NON_LATIN1_GLYPHS = /[│↑↓…]/g;
+
+export function footerWidth(text: string): number {
+	return visibleWidth(text.replace(NON_LATIN1_GLYPHS, "-"));
+}
+
 // Narrow terminals drop the least important segment first, instead of truncating the model and context away.
 const DROP_ORDER = ["bus", "limits", "cost", "goal"] as const;
 
@@ -109,7 +118,7 @@ export function layoutLine(parts: LineParts, width: number, theme: ThemeLike): s
 		]
 			.filter(Boolean)
 			.join(theme.fg("dim", SEP));
-		return { right, used: visibleWidth(parts.loc) + visibleWidth(right) };
+		return { right, used: footerWidth(parts.loc) + footerWidth(right) };
 	};
 	let drop = 0;
 	let line = compose(drop);
