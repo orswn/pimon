@@ -23,6 +23,19 @@ const capture = defineFeature({
 	},
 });
 
+function identityListener() {
+	const typed: unknown[] = [];
+	const listener = defineFeature({
+		id: "identity-listener",
+		description: "test feature that records the bus identity",
+		defaultEnabled: true,
+		setup(ctx) {
+			ctx.events.on("bus:identity", (identity) => typed.push(identity));
+		},
+	});
+	return { typed, listener };
+}
+
 function busService(): BusService {
 	if (!service) throw new Error("no bus service");
 	return service;
@@ -267,28 +280,25 @@ describe("bus feature", () => {
 		expect(toolText(h).at(-1)).toContain("kept");
 	});
 
-	it("emits only name and role to the statusline, on start and on refresh", async () => {
+	it("publishes only name and role on the pimon event bus, on start and at each session start, and not again without a change", async () => {
 		process.env["PI_BUS_ROLE"] = "reviewer";
-		const seen: unknown[] = [];
-		let emitRefresh: (() => void) | undefined;
+		const legacy: unknown[] = [];
+		const { typed, listener } = identityListener();
 		const h = await start({
-			extensions: [
-				(pi) => {
-					pi.events.on("pi-bus:identity", (data) => seen.push(data));
-					emitRefresh = () => pi.events.emit("pi-bus:refresh", undefined);
-				},
-			],
+			features: [bus, capture, listener],
+			extensions: [(pi) => void pi.events.on("pi-bus:identity", (data) => legacy.push(data))],
 		});
 		const identity = { name: busService().name, role: "reviewer" };
-		expect(seen).toEqual([identity]);
+		expect(typed).toEqual([identity]);
 
 		const peer = await startPeer("chatty");
 		await peer.send(`id:${busService().instanceId}`, { body: "x", kind: "note", wake: "never" });
 		await new Promise((resolve) => setTimeout(resolve, 200));
-		expect(seen).toHaveLength(1);
+		expect(typed).toHaveLength(1);
 
-		emitRefresh?.();
-		expect(seen).toEqual([identity, identity]);
+		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
+		expect(typed).toEqual([identity, identity]);
+		expect(legacy).toEqual([]);
 		expect(h.extensionErrors).toEqual([]);
 	});
 
@@ -390,9 +400,10 @@ describe("bus feature", () => {
 		expect(h.requests).toHaveLength(0);
 	});
 
-	it("reports a bus dir that cannot be created as a failed start", async () => {
+	it("reports a bus dir that cannot be created as a failed start and publishes an empty identity", async () => {
+		const { typed, listener } = identityListener();
 		harness = await createHarness({
-			features: [bus, capture],
+			features: [bus, capture, listener],
 			ui: {},
 			setupAgentDir: (agentDir) => writeFileSync(join(agentDir, "bus"), "not a dir"),
 		});
@@ -403,6 +414,7 @@ describe("bus feature", () => {
 		expect(busService().started).toBe(false);
 		const diagnostics = harness.runtime.diagnostics().filter((entry) => entry.feature === "bus");
 		expect(diagnostics.map((entry) => entry.message.split(":")[0])).toEqual(["bus failed to start"]);
+		expect(typed).toEqual([{}]);
 	});
 
 	it("leaves no presence after shutdown", async () => {

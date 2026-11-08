@@ -108,7 +108,9 @@ describe("agents feature", () => {
 			...(placer ? { placer } : {}),
 			timing: { spawnWaitMs: 3_000, pollMs: 20 },
 		});
-		return [...features.map((feature) => (feature.id === "agents" ? agents : feature)), capture];
+		// The footer needs a full UI theme. These tests pass a bare UI to see notices.
+		const used = features.filter((feature) => feature.id !== "statusline");
+		return [...used.map((feature) => (feature.id === "agents" ? agents : feature)), capture];
 	}
 
 	async function start(options: Partial<HarnessOptions> & { placer?: Placer } = {}): Promise<Harness> {

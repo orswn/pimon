@@ -35,10 +35,6 @@ import {
 
 export const DIGEST_TYPE = "pi-bus";
 export const STATE_TYPE = "pi-bus-state";
-// TODO(okka): remove when the statusline moves into pimon
-const IDENTITY_EVENT = "pi-bus:identity";
-// TODO(okka): remove when the statusline moves into pimon
-const REFRESH_EVENT = "pi-bus:refresh";
 const DIGEST_DEBOUNCE_MS = 1_200;
 const MAX_SAVED_SESSIONS = 8;
 
@@ -88,6 +84,8 @@ declare module "../../core/events.ts" {
 	interface PimonEvents {
 		"bus:ready": BusReady;
 		"bus:peer-gone": PeerGone;
+		/** Sent on start, on each change, and at each session start. `{}` means no endpoint. */
+		"bus:identity": { name?: string; role?: string };
 	}
 }
 
@@ -141,6 +139,7 @@ class BusRuntime implements ActionHost {
 	private shuttingDown = false;
 	private cancelClose: (() => void) | undefined;
 	private lastIdentity: string | undefined;
+	private identitySent = false;
 	private readonly ctx: FeatureContext<{ historyRetentionDays: number }>;
 	readonly identity: Identity;
 	private readonly sessions: Map<string, SavedSession>;
@@ -218,15 +217,24 @@ class BusRuntime implements ActionHost {
 		this.emitIdentity(false);
 	}
 
-	/** Emits only when the name or role changed, unless forced by a refresh request. */
+	/** Emits only when the name or role changed, unless forced. */
 	emitIdentity(force: boolean): void {
+		if (this.shuttingDown) return;
 		const node = this.started;
-		if (!node || this.shuttingDown) return;
-		const identity = { name: node.name, role: node.labels["role"] };
+		const role = node?.labels["role"];
+		const identity = node ? { name: node.name, ...(role ? { role } : {}) } : {};
 		const key = JSON.stringify(identity);
 		if (!force && key === this.lastIdentity) return;
 		this.lastIdentity = key;
-		this.ctx.pi.events.emit(IDENTITY_EVENT, identity);
+		this.identitySent = true;
+		this.ctx.events.emit("bus:identity", identity);
+	}
+
+	/** A listener that keeps the last identity needs it again after a session replacement or a failed start. */
+	async startSession(extCtx: ExtensionContext): Promise<void> {
+		this.identitySent = false;
+		await this.start(extCtx);
+		if (!this.identitySent) this.emitIdentity(true);
 	}
 
 	bind(extCtx: ExtensionContext): void {
@@ -576,9 +584,6 @@ export const bus = defineFeature({
 
 		ctx.promptSection({ name: "bus", requiresTools: ["pi_bus"], render: () => BUS_PROMPT });
 
-		// A footer that replaces the built-in one asks for the identity after its own reload.
-		pi.events.on(REFRESH_EVENT, () => runtime.emitIdentity(true));
-
 		const renderer: Parameters<typeof pi.registerMessageRenderer>[1] = (message, { expanded }, theme) => {
 			const content = textOf(message.content);
 			const details = message.details as { wake?: string; count?: number; notices?: number } | undefined;
@@ -624,7 +629,7 @@ export const bus = defineFeature({
 		registerCommands(pi, runtime);
 
 		ctx.onSessionStart(async (_event, extensionCtx) => {
-			await runtime.start(extensionCtx);
+			await runtime.startSession(extensionCtx);
 		});
 		ctx.onSessionShutdown(async () => {
 			await runtime.stop();

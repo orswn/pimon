@@ -42,14 +42,6 @@ export interface StatuslineFeatureOptions {
 
 const DOT = " · ";
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-	return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
-}
-
-function optionalString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
-}
-
 export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) {
 	return defineFeature({
 		id: "statusline",
@@ -76,10 +68,9 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				if (config.gitStatus && renderNow) git.request(cwd);
 			};
 
-			// TODO(okka): switch to the typed bus event when the bus feature ships.
-			pi.events.on("pi-bus:identity", (payload: unknown) => {
-				const identity = asRecord(payload);
-				bus = identity ? { name: optionalString(identity["name"]), role: optionalString(identity["role"]) } : undefined;
+			// Bus is optional: without the bus feature this never fires and no bus segment shows.
+			ctx.events.on("bus:identity", (payload) => {
+				bus = payload;
 				renderNow?.();
 			});
 
@@ -168,8 +159,6 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				ext.ui.setFooter((tui, theme, footerData) => {
 					const requestRender = () => tui.requestRender();
 					renderNow = requestRender;
-					// TODO(okka): switch to the typed bus event when the bus feature ships.
-					pi.events.emit("pi-bus:refresh", {});
 					const disposeBranch = footerData.onBranchChange(() => {
 						requestGit(ext.cwd);
 						tui.requestRender();
@@ -186,9 +175,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 			};
 
 			ctx.onSessionStart((_event, ext) => {
-				// A replacement session gets a new bus endpoint, so a stale name must go. The goal is not cleared:
-				// the goal feature starts first and always publishes at session start, `{}` when there is no goal.
-				bus = undefined;
+				// Bus and goal are not cleared: both start first and always publish at session start, `{}` when empty.
 				aborter = new AbortController();
 				usage = config.usage
 					? createUsagePoller({
@@ -203,9 +190,6 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 					: undefined;
 				if (ext.hasUI) install(ext);
 				requestGit(ext.cwd);
-				// The bus may have published during its own session_start before this handler; ask it again.
-				// TODO(okka): switch to the typed bus event when the bus feature ships.
-				pi.events.emit("pi-bus:refresh", {});
 			});
 
 			pi.on("turn_end", (_event, ext) => {

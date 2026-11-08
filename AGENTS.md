@@ -27,7 +27,7 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Start long-lived work in `ctx.onSessionStart`. Stop it in `ctx.onSessionShutdown`.
 - Keep state that must survive `/reload` in `ctx.reloadState(key, version, create)`. Bump the version when the shape changes.
 - Use `ctx.service(id)` for another feature's service. List that feature in `dependsOn`.
-- Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that. Exception: the `bus` feature keeps the `pi-bus:identity` and `pi-bus:refresh` bridge on `pi.events` for the standalone statusline.
+- Use `ctx.events` for events between features. Do not use `pi.events` or `globalThis` for that.
 - Read options only from `ctx.config`. Declare them in `configSchema`.
 - Start or steer a model run only through `ctx.wake`. Do not call `pi.sendMessage` with `triggerTurn`.
 - One exception: the agents feature sends the first task of a spawned child with `pi.sendUserMessage`, so the task is a user message.

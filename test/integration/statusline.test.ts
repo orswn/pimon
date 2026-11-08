@@ -11,6 +11,7 @@ import { createStatuslineFeature, type StatuslineFeatureOptions } from "../../sr
 import type { PimonEventBus } from "../../src/core/events.ts";
 import { type AnyFeature, defineFeature } from "../../src/core/feature.ts";
 import { background } from "../../src/features/background/index.ts";
+import { bus } from "../../src/features/bus/index.ts";
 import { clearAllTimers, createTimerStore, type TimerStore } from "../../src/features/background/timers.ts";
 import { createGoalFeature } from "../../src/features/goal/index.ts";
 import { createNotifyFeature } from "../../src/features/notify/index.ts";
@@ -51,6 +52,8 @@ afterEach(() => {
 
 interface StartOptions extends StatuslineFeatureOptions {
 	config?: Record<string, unknown>;
+	/** Settings of other features in `pimon.json`. */
+	features?: Record<string, unknown>;
 	auth?: Record<string, unknown>;
 	hasUI?: boolean;
 	/** Features that load before the statusline, as in the real feature list. */
@@ -102,8 +105,10 @@ async function start(options: StartOptions = {}) {
 			createStatuslineFeature({ exec: gitRecorder().exec, fetch: usageFetch().fetch, ...options, cacheDir }),
 		],
 		setupAgentDir: (dir) => {
-			if (options.config)
-				writeFileSync(join(dir, "pimon.json"), JSON.stringify({ features: { statusline: options.config } }));
+			if (options.config || options.features) {
+				const features = { ...options.features, ...(options.config ? { statusline: options.config } : {}) };
+				writeFileSync(join(dir, "pimon.json"), JSON.stringify({ features }));
+			}
 			if (options.auth) writeFileSync(join(dir, "auth.json"), JSON.stringify(options.auth));
 		},
 		extensions: [
@@ -166,6 +171,11 @@ async function start(options: StartOptions = {}) {
 		goal: (payload: { state?: string; turns?: number; timerDueAt?: number }) => {
 			if (!events) throw new Error("no pimon events");
 			events.emit("goal:state", payload);
+		},
+		/** Publishes on the pimon event bus, like the bus feature. */
+		busIdentity: (payload: { name?: string; role?: string }) => {
+			if (!events) throw new Error("no pimon events");
+			events.emit("bus:identity", payload);
 		},
 		indicators,
 		cacheDir,
@@ -364,7 +374,7 @@ describe("statusline footer", () => {
 
 	it("drops the bus segment first on a narrow terminal", async () => {
 		const s = await start();
-		s.pi().events.emit("pi-bus:identity", { name: "worker-1", role: "worker" });
+		s.busIdentity({ name: "worker-1", role: "worker" });
 		s.goal({ state: "active", turns: 3 });
 		const wide = s.line(200);
 		expect(wide).toContain("worker-1:worker");
@@ -381,7 +391,7 @@ describe("statusline events", () => {
 		const s = await start();
 		s.mount();
 		const before = s.renders();
-		s.pi().events.emit("pi-bus:identity", { name: "mars", role: "coordinator" });
+		s.busIdentity({ name: "mars", role: "coordinator" });
 		s.goal({ state: "paused", turns: 2 });
 		expect(s.renders()).toBe(before + 2);
 		const line = s.line();
@@ -389,25 +399,21 @@ describe("statusline events", () => {
 		expect(line).toContain("goal paused");
 	});
 
-	it("asks the bus to publish again at session start and footer install", async () => {
-		let refreshes = 0;
+	it("keeps the last bus identity and goal state at session start", async () => {
 		const s = await start();
-		s.pi().events.on("pi-bus:refresh", () => refreshes++);
-		s.mount();
-		expect(refreshes).toBe(1);
-		await s.h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
-		expect(refreshes).toBe(2);
-	});
-
-	it("clears the bus identity at session start and keeps the last goal state", async () => {
-		const s = await start();
-		s.pi().events.emit("pi-bus:identity", { name: "mars" });
+		s.busIdentity({ name: "mars" });
 		s.goal({ state: "active", turns: 1 });
 		expect(s.line()).toContain("goal 1");
 		await s.h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
 		const line = s.line();
-		expect(line).not.toContain("mars");
+		expect(line).toContain("mars");
 		expect(line).toContain("goal 1");
+	});
+
+	it("ignores a bus identity on pi.events", async () => {
+		const s = await start();
+		s.pi().events.emit("pi-bus:identity", { name: "ghost", role: "worker" });
+		expect(s.line()).not.toContain("ghost");
 	});
 
 	it("ignores a goal state on pi.events", async () => {
@@ -472,6 +478,33 @@ describe("statusline shutdown", () => {
 		expect(readdirSync(s.cacheDir)).toEqual([]);
 		s.goal({ state: "active", turns: 1 });
 		expect(s.renders()).toBe(renders);
+	});
+});
+
+describe("statusline with the bus feature", () => {
+	afterEach(async () => {
+		await harness?.shutdown();
+		delete process.env["PI_BUS_NAME"];
+		delete process.env["PI_BUS_ROLE"];
+		delete (globalThis as Record<string, unknown>)["__piBusOwner"];
+	});
+
+	it("shows name and role after start and after a reload with no human action", async () => {
+		process.env["PI_BUS_NAME"] = "mars";
+		process.env["PI_BUS_ROLE"] = "coordinator";
+		const s = await start({ before: [bus] });
+		expect(s.line()).toContain("mars:coordinator");
+
+		await s.h.session.reload();
+		s.mount();
+		expect(s.line()).toContain("mars:coordinator");
+	});
+
+	it("shows no bus segment when the bus feature is off", async () => {
+		process.env["PI_BUS_NAME"] = "mars";
+		process.env["PI_BUS_ROLE"] = "coordinator";
+		const s = await start({ before: [bus], features: { bus: false } });
+		expect(s.line()).not.toContain("mars");
 	});
 });
 
