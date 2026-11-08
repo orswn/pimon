@@ -55,6 +55,8 @@ export interface HarnessOptions {
 	mode?: ExtensionMode;
 	/** Merged over the default in-memory settings, one level deep. */
 	settings?: Partial<Settings>;
+	/** Default true, like pi's in-memory settings. */
+	projectTrusted?: boolean;
 	fauxModels?: FauxModelDefinition[];
 	modelsStore?: ModelsStore;
 	/** Bind a UI that records notifications. Given methods replace the recording no-ops. */
@@ -156,7 +158,9 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 		thinkingLevel: "off",
 		resourceLoader,
 		sessionManager: options.sessionManager?.(cwd) ?? SessionManager.inMemory(cwd),
-		settingsManager: SettingsManager.inMemory(mergeSettings(options.settings)),
+		settingsManager: SettingsManager.inMemory(mergeSettings(options.settings), {
+			projectTrusted: options.projectTrusted ?? true,
+		}),
 	});
 	const requests: Message[][] = [];
 	const respond = (steps: FauxResponseStep[]) => {
