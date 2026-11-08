@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-11-08
+
 ### Changed
 
 - A context without images no longer gets the image-budget warning that images cannot be omitted.
