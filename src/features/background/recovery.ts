@@ -3,7 +3,7 @@ import { type Liveness, verifyGroup, verifyOwner } from "./identity.ts";
 import { deleteLease, type Lease, leaseDir, pruneTempLeases, readLeases } from "./leases.ts";
 import { addOrphan, dropOrphan, orphans, type Registry } from "./registry.ts";
 
-export type LeaseClass = "foreign" | "orphan" | "own" | "gone";
+type LeaseClass = "foreign" | "orphan" | "own" | "gone";
 
 export interface ClassifyDeps {
 	selfPid?: number;

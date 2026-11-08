@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
-export type ExecFailure = "timeout" | "spawn" | "aborted" | "output-limit" | "signal" | "unknown";
+type ExecFailure = "timeout" | "spawn" | "aborted" | "output-limit" | "signal" | "unknown";
 
 export interface ExecResult {
 	code: number;
@@ -37,7 +37,7 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
 	}
 }
 
-export interface ProcessRunner {
+interface ProcessRunner {
 	run: ExecFn;
 	/** Kill every process group this runner started. Groups of other runners are not touched. */
 	terminateAll(): void;

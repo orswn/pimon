@@ -20,7 +20,7 @@ export interface Lease {
 	owner?: OwnerIdentity;
 }
 
-export interface LeaseFile {
+interface LeaseFile {
 	file: string;
 	lease: Lease | undefined;
 	error: string | undefined;
@@ -75,7 +75,7 @@ export function leaseDir(agentDir: string): string {
 	return path.join(agentDir, "background", "leases");
 }
 
-export function leasePath(lease: Lease, dir: string): string {
+function leasePath(lease: Lease, dir: string): string {
 	const safe = lease.name.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 64);
 	return path.join(dir, `${safe}-${lease.identity.pid}-${lease.createdAt}.json`);
 }

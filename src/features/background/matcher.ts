@@ -5,13 +5,13 @@ import * as fs from "node:fs";
 import { Worker } from "node:worker_threads";
 import { LIMITS, type MatchMode } from "./options.ts";
 
-export interface MatcherHooks {
+interface MatcherHooks {
 	onMatch: (line: string) => void;
 	/** Fatal for this matcher only. The caller mutes the monitor permanently. */
 	onFailure: (reason: string) => void;
 }
 
-export interface MatcherStats {
+interface MatcherStats {
 	dropped: number;
 	inflight: number;
 	queued: number;

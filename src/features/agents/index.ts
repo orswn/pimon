@@ -27,7 +27,7 @@ import {
 	runToolAction,
 } from "./tool.ts";
 
-export interface AgentsFeatureOptions {
+interface AgentsFeatureOptions {
 	/** Defaults to Herdr through the process runner. */
 	placer?: Placer;
 	/** Runs herdr. Ignored when `placer` is given. */

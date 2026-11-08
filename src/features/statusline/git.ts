@@ -17,13 +17,13 @@ export function parseGitStatus(stdout: string): GitStatus | undefined {
 	return { branch, dirty: Math.max(0, lines.length - 1), ahead, behind };
 }
 
-export interface GitWatchOptions {
+interface GitWatchOptions {
 	run: ExecFn;
 	now: () => number;
 	onChange: () => void;
 }
 
-export interface GitWatch {
+interface GitWatch {
 	/** An event that can change the status. Starts a check now, or marks one pending. */
 	request(cwd: string): void;
 	/** Starts a pending or stale check. Never blocks. */

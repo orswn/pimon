@@ -29,7 +29,7 @@ export function goalTemplateCompletions(
 	return items.length > 0 ? items : null;
 }
 
-export function parseTemplateArgs(text: string): string[] {
+function parseTemplateArgs(text: string): string[] {
 	const args: string[] = [];
 	let current = "";
 	let hasToken = false;
@@ -54,7 +54,7 @@ export function parseTemplateArgs(text: string): string[] {
 	return args;
 }
 
-export function substituteTemplateArgs(content: string, args: string[]): string {
+function substituteTemplateArgs(content: string, args: string[]): string {
 	const all = args.join(" ");
 	return content.replace(
 		/\$\{(\d+|ARGUMENTS|@):-([^}]*)\}|\$\{@:(\d+)(?::(\d+))?\}|\$(ARGUMENTS|@|\d+)/g,
@@ -73,7 +73,7 @@ export function substituteTemplateArgs(content: string, args: string[]): string 
 	);
 }
 
-export function templateBody(raw: string): string {
+function templateBody(raw: string): string {
 	const text = raw.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
 	if (!text.startsWith("---")) return text;
 	const end = text.indexOf("\n---", 3);

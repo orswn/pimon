@@ -19,7 +19,7 @@ export type PauseReason =
 	| "wake-source-lost"
 	| "stalled";
 
-export interface GoalLimits {
+interface GoalLimits {
 	/** 0 disables the stop. */
 	maxRejected: number;
 }
@@ -43,9 +43,9 @@ export interface GoalRecord {
 	limits: GoalLimits;
 }
 
-export const MAX_CONDITION_CHARS = 4000;
+const MAX_CONDITION_CHARS = 4000;
 
-export const DEFAULT_LIMITS: GoalLimits = {
+const DEFAULT_LIMITS: GoalLimits = {
 	// No turn or time cap. The rejected-claim stop fires only when the loop cannot converge.
 	maxRejected: 5,
 };

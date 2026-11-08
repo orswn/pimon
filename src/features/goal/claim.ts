@@ -21,7 +21,7 @@ const SESSION_ENDED_TEXT =
 const ADJUDICATION_TIMEOUT_MS = 120_000;
 const CHECK_TIMEOUT_MS = 15 * 60_000;
 
-export interface GoalClaimHost {
+interface GoalClaimHost {
 	session: GoalSession;
 	exec: ExecFn;
 	/** Upper bound of one model adjudication. */

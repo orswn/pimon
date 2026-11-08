@@ -14,8 +14,8 @@ import {
 export const CONTINUE_MESSAGE = "goal-continue";
 export const START_MESSAGE = "goal-start";
 export const CONDITION_MESSAGE = "goal-condition";
-export const STALL_LIMIT = 3;
-export const STALLED_DETAIL = `The agent ended ${STALL_LIMIT} runs in a row without work and without a timer.`;
+const STALL_LIMIT = 3;
+const STALLED_DETAIL = `The agent ended ${STALL_LIMIT} runs in a row without work and without a timer.`;
 
 export interface Cycle {
 	/** The last before-settle boundary of this run asked for a continuation. */
@@ -62,7 +62,7 @@ export type Effect =
 	| { type: "stopped"; reason: PauseReason; detail: string; phone: boolean }
 	| { type: "condition"; text: string; details: GoalMessageDetails };
 
-export interface GoalMessageDetails {
+interface GoalMessageDetails {
 	goal: string;
 	generation: number;
 }

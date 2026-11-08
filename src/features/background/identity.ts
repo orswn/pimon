@@ -27,7 +27,7 @@ export type Liveness = "alive" | "gone" | "ambiguous";
 
 const PROC = "/proc";
 
-export function procAvailable(): boolean {
+function procAvailable(): boolean {
 	try {
 		return fs.statSync(`${PROC}/self/stat`).isFile();
 	} catch {
@@ -110,7 +110,7 @@ export function verifyOwner(owner: OwnerIdentity, deps: VerifyDeps = {}): Livene
 	return "alive";
 }
 
-export interface GroupScanDeps {
+interface GroupScanDeps {
 	listPids?: () => number[];
 	readProcess?: (pid: number) => ProcessIdentity | undefined;
 	available?: () => boolean;

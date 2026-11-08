@@ -72,7 +72,7 @@ export const busToolSchema = Type.Object({
 	unreadOnly: Type.Optional(Type.Boolean({ description: "Only unread messages for inbox (default true)." })),
 });
 
-export type BusAction =
+type BusAction =
 	| "peers"
 	| "probe"
 	| "send"
@@ -119,10 +119,10 @@ export interface ActionResult {
 	details: Record<string, unknown>;
 }
 
-export const REPLY_TARGET_ERROR =
+const REPLY_TARGET_ERROR =
 	'reply derives the recipient from messageId. Use action="send" with target to address a peer.';
 
-export function describePeer(peer: PeerRecord): string {
+function describePeer(peer: PeerRecord): string {
 	return [
 		peer.name,
 		ownerRef(peer),
@@ -165,7 +165,7 @@ function settle(host: ActionHost, headline: string, result: SendResult): ActionR
 	};
 }
 
-export function whoamiAction(host: ActionHost): ActionResult {
+function whoamiAction(host: ActionHost): ActionResult {
 	const node = host.node();
 	const text = [
 		`name: ${node.name}`,
@@ -303,7 +303,7 @@ function formatEnvelopes(envelopes: Envelope[]): string {
 		.join("\n\n---\n\n");
 }
 
-export function readAction(host: ActionHost, params: { messageId?: string; threadId?: string }): ActionResult {
+function readAction(host: ActionHost, params: { messageId?: string; threadId?: string }): ActionResult {
 	const store = host.store();
 	let envelopes: Envelope[];
 	if (params.messageId) {
@@ -344,11 +344,7 @@ export function pendingAction(host: ActionHost): ActionResult {
 	return { text, details: { pending } };
 }
 
-export function topicAction(
-	host: ActionHost,
-	action: "subscribe" | "unsubscribe",
-	topic: string | undefined,
-): ActionResult {
+function topicAction(host: ActionHost, action: "subscribe" | "unsubscribe", topic: string | undefined): ActionResult {
 	if (!topic) throw new Error(`pi_bus action="${action}" requires topic.`);
 	const node = host.node();
 	if (action === "subscribe") node.subscribe(topic);

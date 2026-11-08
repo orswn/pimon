@@ -6,7 +6,7 @@ export interface Budget {
 	maxTotalChars: number;
 }
 
-export interface ClampedBlock {
+interface ClampedBlock {
 	lines: string[];
 	dropped: number;
 	clamped: boolean;
@@ -40,7 +40,7 @@ export function renderBlock(lines: readonly string[], budget: Budget, totalKnown
 	return [header, "```text", ...block.lines, "```"];
 }
 
-export interface ExitInfo {
+interface ExitInfo {
 	kind: "monitor" | "background";
 	name: string;
 	command: string;
@@ -70,7 +70,7 @@ export const SCRIPT_EXIT_BUDGET: Budget = { maxLines: 20, maxLineChars: 500, max
 
 export type ScriptOutcome = "ok" | "error" | "aborted" | "timeout";
 
-export interface ScriptExitInfo {
+interface ScriptExitInfo {
 	kind: "background" | "monitor";
 	name: string;
 	outcome: ScriptOutcome;
@@ -89,7 +89,7 @@ export function scriptExitDigest(info: ScriptExitInfo): string {
 	].join("\n");
 }
 
-export interface MatchInfo {
+interface MatchInfo {
 	name: string;
 	command: string;
 	matchSource: string;

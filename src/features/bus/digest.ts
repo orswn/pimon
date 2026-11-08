@@ -6,11 +6,11 @@ import type { BusStore } from "./store.ts";
 // Bound digests before injection. Compaction owns history reduction after delivery.
 export const MAX_DIGEST_ITEMS = 8;
 export const MAX_DIGEST_BYTES = 8_000;
-export const MAX_DIGEST_BODY_BYTES = 4_000;
+const MAX_DIGEST_BODY_BYTES = 4_000;
 export const MAX_STATE_ITEMS = 10;
 export const MAX_STATE_CHARS = 1_500;
 
-export interface RenderedDigest {
+interface RenderedDigest {
 	text: string;
 	included: Envelope[];
 	omitted: Envelope[];
@@ -21,7 +21,7 @@ export function truncate(value: string, max = 200): string {
 	return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
 }
 
-export function indent(value: string): string {
+function indent(value: string): string {
 	return value
 		.split("\n")
 		.map((line) => `  ${line}`)

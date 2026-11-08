@@ -19,7 +19,7 @@ export function parseJsonWithComments<T>(content: string): T {
 	return JSON.parse(stripped) as T;
 }
 
-export function readDiscoveryProviders(agentDir: string): [string, ProviderJsonConfig][] {
+function readDiscoveryProviders(agentDir: string): [string, ProviderJsonConfig][] {
 	let content: string;
 	try {
 		content = readFileSync(join(agentDir, "models.json"), "utf8");
@@ -60,7 +60,7 @@ function readOldCache(providerId: string): ProviderModelConfig[] | undefined {
 }
 
 // TODO(okka): drop the store-file read when pi updates the model snapshot after the offline refresh phase.
-export function readStoredModels(agentDir: string, providerId: string): ProviderModelConfig[] | undefined {
+function readStoredModels(agentDir: string, providerId: string): ProviderModelConfig[] | undefined {
 	try {
 		const store = readJson(join(agentDir, "models-store.json"));
 		const entry = isRecord(store) ? store[providerId] : undefined;
@@ -71,7 +71,7 @@ export function readStoredModels(agentDir: string, providerId: string): Provider
 }
 
 /** The list a provider shows before any refresh: pi's stored list, then the old cache. */
-export function baselineModels(
+function baselineModels(
 	agentDir: string,
 	providerId: string,
 	config: ProviderJsonConfig,
@@ -103,7 +103,7 @@ export function discoveryEndpoint(config: ProviderJsonConfig, baseUrl: string | 
 	return `${base}${options.path ?? "/models"}`;
 }
 
-export async function fetchModels(
+async function fetchModels(
 	providerId: string,
 	config: ProviderJsonConfig,
 	context: Pick<RefreshModelsContext, "baseUrl" | "credential" | "signal">,
@@ -123,7 +123,7 @@ export async function fetchModels(
 	return (items as RawModelItem[]).map((item) => mapRawItemToModel(item, config, catalog));
 }
 
-export function discoveryProvider(
+function discoveryProvider(
 	providerId: string,
 	config: ProviderJsonConfig,
 	baseline: ProviderModelConfig[] | undefined,

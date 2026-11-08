@@ -232,7 +232,7 @@ export const timerParameters = Type.Object({
 	),
 });
 
-export function runTimerAction(
+function runTimerAction(
 	timers: TimerStore,
 	sessionId: string,
 	params: Record<string, unknown>,
@@ -783,7 +783,7 @@ const BOOLEAN_FLAGS = new Set(["ignore-case", "once", "no-exit", "exit", "from-m
 const SHARED_START_FLAGS = ["name", "cwd", "timeout-ms", "no-exit", "exit", "log-file"];
 const MONITOR_MATCH_FLAGS = ["match", "regex", "ignore-case", "stream", "once", "debounce-ms", "max-per-minute"];
 
-export function validFlags(kind: Kind, subcommand: string): readonly string[] {
+function validFlags(kind: Kind, subcommand: string): readonly string[] {
 	if (subcommand === "logs") return ["lines", "from-memory"];
 	if (subcommand === "edit") return [...MONITOR_MATCH_FLAGS, "no-exit", "exit", "timeout-ms"];
 	return kind === "monitor" ? [...SHARED_START_FLAGS, ...MONITOR_MATCH_FLAGS] : SHARED_START_FLAGS;

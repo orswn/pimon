@@ -7,7 +7,7 @@ import type { Matcher } from "./matcher.ts";
 import { LIMITS, type JobOptions, type Kind, type MonitorOptions } from "./options.ts";
 
 /** A codemode script job. It has no OS process, no pid, and no lease. */
-export interface ScriptJob {
+interface ScriptJob {
 	code: string;
 	abort: AbortController;
 }
@@ -61,7 +61,7 @@ export interface StopOutcome {
 	text: string;
 }
 
-export interface OrphanRecord {
+interface OrphanRecord {
 	file: string;
 	lease: Lease;
 	liveness: Liveness;

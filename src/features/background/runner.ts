@@ -23,7 +23,7 @@ import {
 	type StopOutcome,
 } from "./registry.ts";
 
-export type StartResult = { ok: true; state: JobState } | { ok: false; error: string };
+type StartResult = { ok: true; state: JobState } | { ok: false; error: string };
 
 export function startJob(reg: Registry, options: JobOptions, sessionId?: string): StartResult {
 	const sink = new LogSink(options.logFile, options.logMaxBytes);
@@ -428,7 +428,7 @@ function armTimeout(reg: Registry, state: JobState): void {
 	state.timeoutTimer.unref();
 }
 
-export interface StopOptions {
+interface StopOptions {
 	/** Teardown writes a distinguishable marker so a killed job is not a mystery. */
 	marker?: string;
 	afterKillMs?: number;

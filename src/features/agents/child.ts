@@ -11,7 +11,7 @@ import {
 	takeSpawnFile,
 } from "./spawn-file.ts";
 
-export interface ChildState {
+interface ChildState {
 	/** The spawn file is read once per process. */
 	read: boolean;
 	data?: SpawnFile | undefined;

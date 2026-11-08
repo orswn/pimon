@@ -10,7 +10,7 @@ export type { NotifyKind, NotifyOutcome, NotifyRequest, NotifyService } from "./
 export { formatOutcome } from "./channels.ts";
 export { checkOnlyCall } from "./only-call.ts";
 
-export interface NotifyBlocked {
+interface NotifyBlocked {
 	message: string;
 	detail?: string | undefined;
 }
@@ -27,13 +27,13 @@ declare module "../../core/events.ts" {
 	}
 }
 
-export const NOTIFY_DESCRIPTION =
+const NOTIFY_DESCRIPTION =
 	'Send the human a desktop and phone notification. Use it only for out-of-band attention: kind="blocked" when you cannot continue without the human, kind="done" when unattended work finishes, kind="info" for anything else. It does not replace an ordinary response when the human is present.';
-export const NOTIFY_SNIPPET = "Notify the human on desktop and phone when blocked or when unattended work finishes";
-export const BLOCKED_ALONE_REASON =
+const NOTIFY_SNIPPET = "Notify the human on desktop and phone when blocked or when unattended work finishes";
+const BLOCKED_ALONE_REASON =
 	'notify kind="blocked" must be the only tool call in its message, and cannot be called from codemode. Call it alone.';
 
-export const notifyParameters = Type.Object({
+const notifyParameters = Type.Object({
 	kind: StringEnum(["info", "blocked", "done"] as const, {
 		description: "blocked also pauses an active goal. done reports completion. info is anything else.",
 	}),
@@ -41,7 +41,7 @@ export const notifyParameters = Type.Object({
 	detail: Type.Optional(Type.String({ description: "Optional second line with specifics" })),
 });
 
-export interface NotifyFeatureOptions {
+interface NotifyFeatureOptions {
 	/** Runs notify-send and kdeconnect-cli. Tests inject a recorder. */
 	exec?: ExecFn;
 }

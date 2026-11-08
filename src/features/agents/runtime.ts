@@ -2,7 +2,7 @@
 
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
-export type ThinkingLevelSpec = (typeof THINKING_LEVELS)[number];
+type ThinkingLevelSpec = (typeof THINKING_LEVELS)[number];
 
 export interface ModelChoice {
 	id: string;
@@ -10,7 +10,7 @@ export interface ModelChoice {
 	name?: string | undefined;
 }
 
-export type Origin = "explicit" | "role" | "inherited";
+type Origin = "explicit" | "role" | "inherited";
 
 export interface ResolvedRuntime {
 	model?: string;
@@ -67,7 +67,7 @@ export function resolveThinkingSpec(spec: string): { thinking: string } | { erro
 	return { thinking: wanted };
 }
 
-export interface RuntimeRequest {
+interface RuntimeRequest {
 	model?: string | undefined;
 	thinking?: string | undefined;
 	roleModel?: string | undefined;

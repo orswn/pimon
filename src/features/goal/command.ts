@@ -10,7 +10,7 @@ import type { GoalSession } from "./session.ts";
 import { clear, createGoal, describe, type GoalRecord, isActive, pause, resume, validateCondition } from "./state.ts";
 import { expandGoalTemplate, type TemplateCommand } from "./template.ts";
 
-export interface GoalCommandHost {
+interface GoalCommandHost {
 	session: GoalSession;
 	timers: BackgroundService["timers"];
 	commands(): readonly TemplateCommand[];

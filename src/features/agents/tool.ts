@@ -91,7 +91,7 @@ export const agentsToolSchema = Type.Object({
 	force: Type.Optional(Type.Boolean({ description: "For kill: also close the child's pane. Defaults to true." })),
 });
 
-export type AgentsAction =
+type AgentsAction =
 	| "spawn"
 	| "list"
 	| "probe"
@@ -340,7 +340,7 @@ function forgetTracked(host: AgentsHost, record: ChildRecord): void {
 }
 
 /** Forget records whose endpoint and process are both confirmed gone. */
-export function pruneGoneChildren(host: AgentsHost, includeNeverStarted = false): string[] {
+function pruneGoneChildren(host: AgentsHost, includeNeverStarted = false): string[] {
 	if (!host.bus.started) return [];
 	const removed: string[] = [];
 	for (const child of host.records.mine(host.bus.owner)) {
@@ -429,7 +429,7 @@ export function defineRoleAction(host: AgentsHost, ctx: ExtensionContext, params
 	};
 }
 
-export function deleteRoleAction(host: AgentsHost, ctx: ExtensionContext, params: AgentsToolInput): ActionResult {
+function deleteRoleAction(host: AgentsHost, ctx: ExtensionContext, params: AgentsToolInput): ActionResult {
 	const raw = params.role ?? params.name;
 	if (!raw) throw new Error('pi_agents action="delete_role" requires role.');
 	const sources = roleSources(host, ctx, false);

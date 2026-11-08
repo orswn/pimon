@@ -11,7 +11,7 @@ import { THINKING_LEVELS } from "./runtime.ts";
 const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const DAY_MS = 24 * 60 * 60_000;
 
-export interface SessionRolePatch {
+interface SessionRolePatch {
 	name: string;
 	description?: string | undefined;
 	prompt?: string | undefined;
@@ -21,7 +21,7 @@ export interface SessionRolePatch {
 	labels?: string | undefined;
 }
 
-export interface ExistingRole {
+interface ExistingRole {
 	description: string;
 	prompt: string;
 	model?: string | undefined;

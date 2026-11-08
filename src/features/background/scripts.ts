@@ -154,7 +154,7 @@ function header(kind: Kind, name: string, code: string): string {
 	].join("\n");
 }
 
-export interface ScriptStartDeps {
+interface ScriptStartDeps {
 	reg: Registry;
 	maxScriptJobs: number;
 	ctx: ExtensionToolContext;
@@ -386,7 +386,7 @@ function describeScriptStart(state: JobState): string {
 	return lines.join("\n");
 }
 
-export const SCRIPT_LIFETIME_NOTE =
+const SCRIPT_LIFETIME_NOTE =
 	"Script jobs stop at /reload, session switch, and quit. Its tool calls run outside your turn.";
 
 const SCRIPT_GLOBALS_TEXT =
@@ -428,7 +428,7 @@ export const monitorCodemodeParameters = Type.Object({
 	timeoutMs: Type.Optional(Type.Number({ description: "Abort the script after this long; 0 disables (default 0)" })),
 });
 
-export interface ScriptToolDeps {
+interface ScriptToolDeps {
 	reg: Registry;
 	engine: EngineCache;
 	maxScriptJobs: number;

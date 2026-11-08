@@ -36,7 +36,7 @@ export interface Motion {
 	char?: string;
 }
 
-export interface MotionTarget {
+interface MotionTarget {
 	pos: Pos;
 	linewise?: boolean;
 	/** The range includes the cell at `pos`. */
@@ -45,7 +45,7 @@ export interface MotionTarget {
 	find?: Find;
 }
 
-export interface MotionInput {
+interface MotionInput {
 	count: number;
 	/** A count was typed. `G` and `gg` need it. */
 	hasCount: boolean;
@@ -88,7 +88,7 @@ function cellIndex(starts: readonly number[], col: number): number {
 	return low;
 }
 
-export function cellStart(line: string, col: number): number {
+function cellStart(line: string, col: number): number {
 	const starts = cells(line);
 	return starts[cellIndex(starts, Math.min(col, line.length))] ?? 0;
 }
@@ -107,7 +107,7 @@ export function prevCell(line: string, col: number): number {
 	return start < col ? start : (starts[index - 1] ?? 0);
 }
 
-export function lastCell(line: string): number {
+function lastCell(line: string): number {
 	return line.length === 0 ? 0 : prevCell(line, line.length);
 }
 
@@ -249,7 +249,7 @@ function wordEnd(view: LineCells, from: Pos, big: boolean): Pos {
 	}
 }
 
-export function findInLine(line: string, col: number, find: Find, count: number, repeat: boolean): number | undefined {
+function findInLine(line: string, col: number, find: Find, count: number, repeat: boolean): number | undefined {
 	const starts = cells(line);
 	const index = cellIndex(starts, col);
 	const forward = find.kind === "f" || find.kind === "t";

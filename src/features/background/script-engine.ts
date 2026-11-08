@@ -7,7 +7,7 @@ import type { CodemodeResult, CodemodeTool } from "@earendil-works/pi-codemode";
 
 type Engine = typeof import("@earendil-works/pi-codemode");
 
-export const SCRIPT_MEMORY_LIMIT_BYTES = 128 * 1024 * 1024;
+const SCRIPT_MEMORY_LIMIT_BYTES = 128 * 1024 * 1024;
 export const CODEMODE_PACKAGE = "@earendil-works/pi-codemode";
 
 export interface LoadedEngine {
@@ -42,7 +42,7 @@ export async function loadEngine(cache: EngineCache, onFirstLoad?: () => void): 
 	return cache.engine;
 }
 
-export interface ScriptRun {
+interface ScriptRun {
 	code: string;
 	tools: CodemodeTool[];
 	globals: CodemodeTool[];

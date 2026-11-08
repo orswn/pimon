@@ -36,7 +36,7 @@ const TAIL = "───";
 const MODIFY_OTHER_KEYS = /^\x1b\[27;[12];(\d+)~$/;
 
 /** A printable key as one char, or a named key. CSI-u and modifyOtherKeys `shift+g` become `G`. */
-export function normalizeKey(data: string): { char: string } | { key: string | undefined } {
+function normalizeKey(data: string): { char: string } | { key: string | undefined } {
 	// oxlint-disable-next-line no-control-regex
 	if (data.length > 0 && !/[\x00-\x1f\x7f]/.test(data)) return { char: data };
 	const id = parseKey(data);

@@ -14,7 +14,7 @@ import type { Command, Operator, Target } from "./parser.ts";
 import type { Register } from "./register.ts";
 import { type Range, textObject } from "./text-objects.ts";
 
-export interface ExecInput {
+interface ExecInput {
 	register: Register | undefined;
 	lastFind: Find | undefined;
 	/** Column that `j` and `k` aim for. */
@@ -115,7 +115,7 @@ function simple(
 	}
 }
 
-export function resolveRange(
+function resolveRange(
 	lines: readonly string[],
 	cursor: Pos,
 	op: Operator,

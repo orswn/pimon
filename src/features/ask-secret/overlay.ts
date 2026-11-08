@@ -30,7 +30,7 @@ export interface AskRequest {
 	reason: string;
 }
 
-export interface CloseSource {
+interface CloseSource {
 	once(event: "close", listener: () => void): unknown;
 	off(event: "close", listener: () => void): unknown;
 }

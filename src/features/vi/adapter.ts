@@ -18,7 +18,7 @@ export interface Snapshot {
 	pasteCounter: number;
 }
 
-export interface Edit {
+interface Edit {
 	lines: string[];
 	cursor: Pos;
 }

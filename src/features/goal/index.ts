@@ -25,9 +25,9 @@ export { typoVerb } from "./command.ts";
 
 const ENTRY_TYPE = "goal";
 const CLAIM_TOOL = "goal_done";
-export const NO_TIMER_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
+const NO_TIMER_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
 
-export const CLAIM_DESCRIPTION =
+const CLAIM_DESCRIPTION =
 	"Claim that the active goal's completion condition is met. An independent check runs before the claim is accepted. Must be the only tool call in its message.";
 
 export interface GoalStatePayload {
@@ -44,7 +44,7 @@ declare module "../../core/events.ts" {
 	}
 }
 
-export interface GoalFeatureOptions {
+interface GoalFeatureOptions {
 	/** Runs check commands. Tests inject a recorder. */
 	exec?: ExecFn;
 	/** Upper bound of one model adjudication. Tests shorten it. */

@@ -15,14 +15,14 @@ export interface Defaults {
 	reserveTokens: number;
 }
 
-export interface ThresholdInfo {
+interface ThresholdInfo {
 	key: string;
 	enabled: boolean;
 	threshold: number;
 	hasOverride: boolean;
 }
 
-export const modelKey = (model: Pick<ModelWindow, "provider" | "id">) => `${model.provider}/${model.id}`;
+const modelKey = (model: Pick<ModelWindow, "provider" | "id">) => `${model.provider}/${model.id}`;
 
 /** Same rule as pi: compact when context passes `contextWindow - reserveTokens`, with the per-model reserve first. */
 export function compactionThreshold(

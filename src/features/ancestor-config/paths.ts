@@ -7,7 +7,7 @@ import { CONFIG_DIR_NAME, type ExtensionAPI } from "@earendil-works/pi-coding-ag
 // cwd. This continues both walks up to but excluding $HOME, so workspace-level skills and MCP
 // servers load inside any repo or worktree nested under the workspace.
 
-export type ServerConfig = Parameters<ExtensionAPI["registerMcpServer"]>[1];
+type ServerConfig = Parameters<ExtensionAPI["registerMcpServer"]>[1];
 
 // A cwd outside $HOME gets nothing: ancestors such as /tmp can be written by other users.
 function ancestorsBelowHome(start: string, home: string): string[] {
@@ -35,7 +35,7 @@ export function skillDirsAboveRepo(cwd: string, home = homedir()): string[] {
 }
 
 // Pi already loads the cwd prompts. A nearer directory loads first, so it wins a name clash.
-export function ancestorPromptDirs(cwd: string, home = homedir()): string[] {
+function ancestorPromptDirs(cwd: string, home = homedir()): string[] {
 	return ancestorsBelowHome(dirname(resolve(cwd)), home)
 		.map((dir) => join(dir, CONFIG_DIR_NAME, "prompts"))
 		.filter(existsSync);

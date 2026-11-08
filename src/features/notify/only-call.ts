@@ -18,7 +18,7 @@ export function siblingToolCalls(branch: readonly unknown[], toolCallId: string)
 	return [];
 }
 
-export interface OnlyCallCheck {
+interface OnlyCallCheck {
 	nested: boolean;
 	siblings: string[];
 }

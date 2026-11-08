@@ -2,8 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
-export type RoleScope = "user" | "project" | "both";
-export type RoleSource = "user" | "project" | "session";
+type RoleScope = "user" | "project" | "both";
+type RoleSource = "user" | "project" | "session";
 
 export interface Role {
 	name: string;

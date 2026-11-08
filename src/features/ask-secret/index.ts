@@ -25,7 +25,7 @@ import { type AskpassServer, listenAskpass } from "./server.ts";
 
 export const ASKPASS_CLIENT = fileURLToPath(new URL("./pi-ask-secret", import.meta.url));
 
-export function askpassSocketPath(): string {
+function askpassSocketPath(): string {
 	return join(process.env["XDG_RUNTIME_DIR"] ?? "/tmp", "pi-ask-secret", `${process.pid}.sock`);
 }
 
@@ -84,9 +84,9 @@ export function redactWake(message: WakeMessage, store: SecretStore): WakeMessag
 }
 
 export const REMOVED_OUTPUT = "[output removed by ask-secret: it could contain a secret]\n";
-export const MAX_REWRITE_BYTES = 64 * 1024 * 1024;
+const MAX_REWRITE_BYTES = 64 * 1024 * 1024;
 
-export type RedactFileResult =
+type RedactFileResult =
 	| { outcome: "unchanged" | "redacted" | "missing" }
 	| { outcome: "removed" | "deleted" | "failed"; error: unknown };
 
@@ -135,12 +135,12 @@ export async function redactFile(
 }
 
 /** Rings the bell and shows a desktop notification when a prompt opens. */
-export function desktopAlert(pi: ExtensionAPI, text: string): void {
+function desktopAlert(pi: ExtensionAPI, text: string): void {
 	process.stdout.write("\x07");
 	pi.exec("notify-send", ["-a", "pi", "pi-ask-secret", text.slice(0, 200)]).catch(() => {});
 }
 
-export interface AskSecretOptions {
+interface AskSecretOptions {
 	alert?: (pi: ExtensionAPI, text: string) => void;
 	maxRewriteBytes?: number;
 }

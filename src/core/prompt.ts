@@ -4,7 +4,7 @@ import type { FeatureId, PromptInput, PromptSection } from "./feature.ts";
 const SECTION_NAME = /^[a-z][a-z0-9_-]*$/;
 const RESERVED = new Set(["preamble", "tools", "rules", "docs", "addendum", "project_context", "skills", "cwd"]);
 
-export interface RenderedSection {
+interface RenderedSection {
 	name: string;
 	feature: FeatureId;
 	text: string;

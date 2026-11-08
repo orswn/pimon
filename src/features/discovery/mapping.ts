@@ -4,7 +4,7 @@ import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 type ChatModelConfig = Extract<ProviderModelConfig, { reasoning: boolean }>;
 type Compat = Model<Api>["compat"];
 
-export interface DiscoveryOptions {
+interface DiscoveryOptions {
 	path?: string;
 	endpoint?: string;
 	timeoutMs?: number;

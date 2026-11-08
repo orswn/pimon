@@ -16,7 +16,7 @@ function prepareSocketDir(dir: string): void {
 	chmodSync(dir, 0o700);
 }
 
-export interface AskpassServerOptions {
+interface AskpassServerOptions {
 	sockPath: string;
 	ask(request: AskRequest, conn: Socket): Promise<string | undefined>;
 	/** Runs before the reply reaches the client. */

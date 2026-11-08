@@ -5,7 +5,7 @@ export const CONTEXT_MODES = ["isolated", "handoff", "fork"] as const;
 export type ContextMode = (typeof CONTEXT_MODES)[number];
 export const MAX_HANDOFF_BYTES = 16 * 1024;
 
-export interface SpawnContext {
+interface SpawnContext {
 	mode: ContextMode;
 	brief?: string;
 }

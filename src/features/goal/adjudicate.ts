@@ -2,9 +2,9 @@
 // Only a check command that ran to completion and exited nonzero rejects a claim.
 import type { ExecFn } from "../../core/exec.ts";
 
-export type Verdict = "accepted" | "rejected" | "unverified";
+type Verdict = "accepted" | "rejected" | "unverified";
 
-export interface Adjudication {
+interface Adjudication {
 	verdict: Verdict;
 	reason: string;
 	usage?: Usage | undefined;
@@ -54,7 +54,7 @@ export function combineUsage(parts: readonly unknown[]): Usage | undefined {
 	return seen ? total : undefined;
 }
 
-export interface ModelVerdict {
+interface ModelVerdict {
 	done: boolean;
 	reason: string;
 }
@@ -163,7 +163,7 @@ export interface ModelResponse {
 	error?: string | undefined;
 }
 
-export type CompleteFn = (prompt: string, signal?: AbortSignal) => Promise<ModelResponse>;
+type CompleteFn = (prompt: string, signal?: AbortSignal) => Promise<ModelResponse>;
 
 export async function adjudicateWithModel(params: {
 	condition: string;

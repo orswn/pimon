@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 /** Injectable so every open and rename failure path can be exercised in tests. */
-export interface FileOps {
+interface FileOps {
 	openSync: typeof fs.openSync;
 	closeSync: typeof fs.closeSync;
 	writeSync: (fd: number, buffer: Buffer) => number;
@@ -16,7 +16,7 @@ export interface FileOps {
 	accessSync: typeof fs.accessSync;
 }
 
-export const realOps: FileOps = {
+const realOps: FileOps = {
 	openSync: fs.openSync,
 	closeSync: fs.closeSync,
 	writeSync: (fd, buffer) => fs.writeSync(fd, buffer),
@@ -213,7 +213,7 @@ function nearestExisting(dir: string): string {
 	}
 }
 
-export interface TailResult {
+interface TailResult {
 	lines: string[];
 	error: string | undefined;
 }

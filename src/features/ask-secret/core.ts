@@ -1,8 +1,8 @@
 export const ENV_PREFIX = "PI_SECRET_";
 export const MAX_SECRET_BYTES = 64 * 1024;
-export const MAX_TOTAL_BYTES = 256 * 1024;
+const MAX_TOTAL_BYTES = 256 * 1024;
 export const MIN_REDACT_LENGTH = 4;
-export const MIN_LINE_REDACT_LENGTH = 16;
+const MIN_LINE_REDACT_LENGTH = 16;
 // Not a `$PI_SECRET_` handle: an askpass reply must not look like a usable shell variable.
 export const ASKPASS_REDACTED = "[askpass reply redacted]";
 
@@ -96,7 +96,7 @@ export class SecretStore {
 	}
 }
 
-export type TagResult = {
+type TagResult = {
 	text: string;
 	added: { name: string; replaced: boolean; short: boolean }[];
 };

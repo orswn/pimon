@@ -38,7 +38,7 @@ const SOURCES = {
 } as const satisfies Record<keyof LaunchEnv, string>;
 
 /** Identity keys leave the process env, so bash, background jobs, and nested pi do not inherit them. */
-export const DELETED_ENV_KEYS = [
+const DELETED_ENV_KEYS = [
 	"PI_BUS_OWNER",
 	"PI_BUS_NAME",
 	"PI_BUS_LABELS",

@@ -23,7 +23,7 @@ export interface NotifyService {
 	notify(request: NotifyRequest): Promise<NotifyOutcome>;
 }
 
-export interface NotifierOptions {
+interface NotifierOptions {
 	exec: ExecFn;
 	now?: () => number;
 	dedupeMs?: number;

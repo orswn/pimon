@@ -2,7 +2,7 @@ import type { FindKind, Motion, MotionKey } from "./motions.ts";
 import { OBJECT_KEYS } from "./text-objects.ts";
 
 export type Operator = "d" | "c" | "y";
-export type SimpleKey = "x" | "s" | "S" | "D" | "C" | "Y" | "J" | "p" | "P" | "u" | "i" | "a" | "A" | "I" | "o" | "O";
+type SimpleKey = "x" | "s" | "S" | "D" | "C" | "Y" | "J" | "p" | "P" | "u" | "i" | "a" | "A" | "I" | "o" | "O";
 
 export type Target = { motion: Motion } | { object: "i" | "a"; key: string } | { line: true };
 
@@ -19,7 +19,7 @@ export type Command =
 
 export type Feed = { kind: "pending" } | { kind: "none" } | { kind: "command"; command: Command };
 
-export const MAX_COUNT = 9999;
+const MAX_COUNT = 9999;
 
 const MOTIONS = new Set<string>(["h", "j", "k", "l", "0", "^", "_", "$", "w", "b", "e", "W", "B", "E", "G", ";", ","]);
 const SIMPLE = new Set<string>(["x", "s", "S", "D", "C", "Y", "J", "p", "P", "u", "i", "a", "A", "I", "o", "O"]);

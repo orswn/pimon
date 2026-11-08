@@ -6,7 +6,7 @@ export type StreamName = "stdout" | "stderr";
 /** `any` matches every line. Only script monitors without a match use it. */
 export type MatchMode = "literal" | "regex" | "any";
 
-export interface BaseOptions {
+interface BaseOptions {
 	kind: Kind;
 	name: string;
 	command: string;
@@ -17,7 +17,7 @@ export interface BaseOptions {
 	logMaxBytes: number;
 }
 
-export interface MonitorExtras {
+interface MonitorExtras {
 	mode: MatchMode;
 	matchSource: string;
 	ignoreCase: boolean;
@@ -254,7 +254,7 @@ export function parseMonitorEdit(raw: Record<string, unknown>, current: MonitorO
 	return updates;
 }
 
-export interface CompiledMatch {
+interface CompiledMatch {
 	mode: MatchMode;
 	source: string;
 	ignoreCase: boolean;

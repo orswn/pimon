@@ -20,7 +20,7 @@ interface BranchEntry {
 	message?: SessionMessage;
 }
 
-export interface EvidenceLimits {
+interface EvidenceLimits {
 	maxItems: number;
 	maxCharsPerItem: number;
 	maxTotalChars: number;

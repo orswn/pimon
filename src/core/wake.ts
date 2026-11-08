@@ -1,15 +1,15 @@
 import type { FeatureId, WakeMessage } from "./feature.ts";
 
-export interface WakeGateOptions {
+interface WakeGateOptions {
 	send(message: WakeMessage): void;
 	isIdle(): boolean;
 	warn(message: string): void;
 	fallbackMs?: number;
 }
 
-export type WakeFilter = (message: WakeMessage) => WakeMessage;
+type WakeFilter = (message: WakeMessage) => WakeMessage;
 
-export interface WakeGate {
+interface WakeGate {
 	wake(feature: FeatureId, message: WakeMessage): void;
 	addFilter(feature: FeatureId, filter: WakeFilter, logError: (message: string, cause: unknown) => void): void;
 	hold(): void;

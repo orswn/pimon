@@ -9,7 +9,7 @@ export const TIMER_LIMITS = {
 	maxReasonChars: 500,
 } as const;
 
-export const TIMER_LIFETIME_NOTE = "Timers end with the pi process.";
+const TIMER_LIFETIME_NOTE = "Timers end with the pi process.";
 
 export interface TimerInfo {
 	id: number;
@@ -76,7 +76,7 @@ export function clockTime(epochMs: number): string {
 	return new Date(epochMs).toTimeString().slice(0, 8);
 }
 
-export function firedText(timer: TimerInfo, now: number): string {
+function firedText(timer: TimerInfo, now: number): string {
 	return `Timer "${timer.name}" fired (set ${formatDuration(now - timer.createdAt)} ago). Reason: ${timer.reason}`;
 }
 
@@ -109,7 +109,7 @@ function matches(timer: TimerInfo, filter: TimerFilter): boolean {
 	);
 }
 
-export interface SetParams {
+interface SetParams {
 	name?: unknown;
 	delaySeconds?: unknown;
 	reason?: unknown;

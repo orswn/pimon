@@ -57,7 +57,7 @@ function isPrivate(stats: Stats): boolean {
 }
 
 /** `mkdir` keeps an existing dir as it is. The root has a guessable name in shared /tmp, so another user may own it. */
-export function assertPrivateDir(dir: string): void {
+function assertPrivateDir(dir: string): void {
 	const stats = lstatSync(dir);
 	if (stats.isSymbolicLink() || !stats.isDirectory() || !isPrivate(stats)) {
 		throw new Error(`${dir} is not private: it must be a directory, not a symlink, owned by this user, with mode 0700`);
@@ -105,7 +105,7 @@ function isString(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0;
 }
 
-export function parseSpawnFile(raw: unknown): SpawnFile | string {
+function parseSpawnFile(raw: unknown): SpawnFile | string {
 	if (typeof raw !== "object" || raw === null) return "not a JSON object";
 	const data = raw as Partial<Record<keyof SpawnFile, unknown>>;
 	if (data.version !== 1) return `unsupported version ${JSON.stringify(data.version)}`;

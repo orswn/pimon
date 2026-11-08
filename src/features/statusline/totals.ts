@@ -10,7 +10,7 @@ export interface StatsSource {
 	getContextUsage(): ContextUsage | undefined;
 }
 
-export interface UsageTotals {
+interface UsageTotals {
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -18,7 +18,7 @@ export interface UsageTotals {
 	cost: number;
 }
 
-export interface SessionStats {
+interface SessionStats {
 	totals: UsageTotals;
 	context: ContextUsage | undefined;
 }

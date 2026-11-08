@@ -36,7 +36,7 @@ export interface Placer {
 
 export const OUTSIDE_HERDR = "pi_agents needs a Herdr session. Start pi inside Herdr.";
 
-export interface HerdrOptions {
+interface HerdrOptions {
 	exec: ExecFn;
 	env?: NodeJS.ProcessEnv;
 	/** Herdr returns the tab before its login shell reaches a prompt. */
