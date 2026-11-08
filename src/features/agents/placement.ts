@@ -101,8 +101,8 @@ export function writeCloseHook(paths: AgentPaths, spawnId: string): string {
 export function createHerdrPlacer(options: HerdrOptions): Placer {
 	const env = options.env ?? process.env;
 	const sleep = options.sleep ?? defaultSleep;
-	const run = async (args: string[]): Promise<string> => {
-		const result = await options.exec("herdr", args, { timeoutMs: 45_000 });
+	const run = async (args: string[], timeoutMs = 45_000): Promise<string> => {
+		const result = await options.exec("herdr", args, { timeoutMs });
 		if (result.failed || result.code !== 0) {
 			throw new Error(
 				`herdr ${args.slice(0, 2).join(" ")} failed: ${(result.stderr || result.failed || `exit ${result.code}`).trim()}`,
@@ -110,8 +110,8 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 		}
 		return result.stdout.trim();
 	};
-	const json = async <T>(args: string[]): Promise<T> => {
-		const value = await run(args);
+	const json = async <T>(args: string[], timeoutMs?: number): Promise<T> => {
+		const value = await run(args, timeoutMs);
 		try {
 			return JSON.parse(value) as T;
 		} catch {
@@ -127,6 +127,20 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 		}
 	};
 	const inside = () => env["HERDR_ENV"] === "1";
+	// The env keeps the IDs from the pane's start. After a move to another workspace only Herdr knows the current ones.
+	const currentPane = async (): Promise<{ workspaceId?: string; paneId?: string }> => {
+		// Without a caller pane, --current can name the pane that the human focused.
+		if (!env["HERDR_PANE_ID"]) return {};
+		try {
+			const response = await json<{ result?: { pane?: { pane_id?: string; workspace_id?: string } } }>(
+				["pane", "current", "--current"],
+				5_000,
+			);
+			return { workspaceId: response.result?.pane?.workspace_id, paneId: response.result?.pane?.pane_id };
+		} catch {
+			return {};
+		}
+	};
 
 	const shellReady = async (paneId: string): Promise<boolean> => {
 		try {
@@ -142,6 +156,7 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 		}
 	};
 
+	// TODO(okka): a child pane that the human moved to another workspace gets a new ID, so close, alive, and focus miss it. Find the pane by its agent name instead.
 	const close = async (placement: Placement): Promise<boolean> =>
 		placement.kind === "herdr" ? attempt(["pane", "close", placement.handle]) : false;
 
@@ -149,7 +164,7 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 		inside,
 		async place(request, id) {
 			if (!inside()) throw new Error(OUTSIDE_HERDR);
-			const workspaceId = env["HERDR_WORKSPACE_ID"];
+			const workspaceId = (await currentPane()).workspaceId ?? env["HERDR_WORKSPACE_ID"];
 			if (!workspaceId) throw new Error("Herdr placement requires HERDR_WORKSPACE_ID");
 			const label =
 				request.title
@@ -227,8 +242,9 @@ export function createHerdrPlacer(options: HerdrOptions): Placer {
 		async describe() {
 			if (!inside()) return "herdr: not available, this process is not inside Herdr";
 			const reachable = await attempt(["status", "client"]);
-			const pane = env["HERDR_PANE_ID"] ?? "unknown";
-			const workspace = env["HERDR_WORKSPACE_ID"] ?? "unknown";
+			const current = reachable ? await currentPane() : {};
+			const pane = current.paneId ?? env["HERDR_PANE_ID"] ?? "unknown";
+			const workspace = current.workspaceId ?? env["HERDR_WORKSPACE_ID"] ?? "unknown";
 			return reachable
 				? `herdr: available, workspace ${workspace}, pane ${pane}. Each child uses one full tab; the parent keeps its tab.`
 				: `herdr: inside workspace ${workspace}, pane ${pane}, but the herdr CLI does not answer`;

@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Fixed
+
+- `pi_agents` opens a child tab in the workspace that the parent pane is in now. Before, a parent pane moved to another Herdr workspace opened children in its first workspace.
+
 ## [1.1.0] - 2026-11-09
 
 ### Changed

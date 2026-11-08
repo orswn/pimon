@@ -22,7 +22,9 @@ interface FakeHerdr {
 }
 
 /** In-memory herdr CLI. Each call takes `delayMs`, so overlapping placements interleave. */
-function fakeHerdr(options: { delayMs?: number; failAgentStart?: boolean } = {}): FakeHerdr {
+function fakeHerdr(
+	options: { delayMs?: number; failAgentStart?: boolean; current?: { workspace: string; pane: string } | "fail" } = {},
+): FakeHerdr {
 	const calls: string[][] = [];
 	const panes = new Map<string, { tab: string }>([["w1:p1", { tab: "w1:t1" }]]);
 	const tabs = new Set(["w1:t1"]);
@@ -35,6 +37,11 @@ function fakeHerdr(options: { delayMs?: number; failAgentStart?: boolean } = {})
 		if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs));
 		const [group, verb] = args;
 		if (group === "status") return ok({ status: "ok" });
+		if (group === "pane" && verb === "current") {
+			const current = options.current ?? { workspace: "w1", pane: "w1:p1" };
+			if (current === "fail") return fail;
+			return ok({ result: { pane: { pane_id: current.pane, workspace_id: current.workspace } } });
+		}
 		if (group === "tab" && verb === "create") {
 			const id = next++;
 			const tab = `w1:t${id}`;
@@ -117,6 +124,34 @@ describe("herdr placement", () => {
 		expect(starts[0]?.slice(starts[0].indexOf("--"))).toEqual(["--", "-e", "/x/hook-herdr-close.ts", "--model", "a/b"]);
 		expect(herdr.calls.some((args) => args[1] === "split")).toBe(false);
 		expect(await placer.describe()).toContain("workspace w1, pane w1:p1");
+	});
+
+	it("places the child in the workspace the parent pane is in now, not the one in its env", async () => {
+		const herdr = fakeHerdr({ current: { workspace: "w2", pane: "w2:p5" } });
+		const placer = createHerdrPlacer({ exec: herdr.exec, env: HERDR_ENV, shellDelayMs: 0, pollMs: 1 });
+		await placer.place(request("reviewer"), "12345678");
+		const create = herdr.calls.find((args) => args[0] === "tab" && args[1] === "create");
+		expect(create?.slice(2, 4)).toEqual(["--workspace", "w2"]);
+		expect(await placer.describe()).toContain("workspace w2, pane w2:p5");
+	});
+
+	it("falls back to the env workspace when Herdr cannot name the current pane", async () => {
+		const herdr = fakeHerdr({ current: "fail" });
+		const placer = createHerdrPlacer({ exec: herdr.exec, env: HERDR_ENV, shellDelayMs: 0, pollMs: 1 });
+		await placer.place(request("reviewer"), "12345678");
+		const create = herdr.calls.find((args) => args[0] === "tab" && args[1] === "create");
+		expect(create?.slice(2, 4)).toEqual(["--workspace", "w1"]);
+		expect(await placer.describe()).toContain("workspace w1, pane w1:p1");
+	});
+
+	it("does not ask Herdr for the current pane without a caller pane", async () => {
+		const herdr = fakeHerdr({ current: { workspace: "w9", pane: "w9:p1" } });
+		const env = { HERDR_ENV: "1", HERDR_WORKSPACE_ID: "w1" };
+		const placer = createHerdrPlacer({ exec: herdr.exec, env, shellDelayMs: 0, pollMs: 1 });
+		await placer.place(request("reviewer"), "12345678");
+		expect(herdr.calls.some((args) => args[0] === "pane" && args[1] === "current")).toBe(false);
+		const create = herdr.calls.find((args) => args[0] === "tab" && args[1] === "create");
+		expect(create?.slice(2, 4)).toEqual(["--workspace", "w1"]);
 	});
 
 	it("closes child tabs and leaves the parent tab", async () => {
