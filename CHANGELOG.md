@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-08
+
 ### Added
 
 - `timer` tool and `/timers` command in the `background` feature. A timer wakes its session later with a reason. Timers end with the pi process.
