@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- `vi` feature: a modal vi editor for the prompt. Moved from the standalone extension. Options: `clipboard` (`"yank"` or `"never"`) and `cursorShape`.
+
 ### Changed
 
 - Peer presence files are written when the run state changes, not on each tool call. `pi_bus peers` shows the current tool within 5 s.
@@ -11,10 +15,15 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - The `notify`, `goal`, `background`, and secrets prompt sections appear only when their tools are active.
 - The prompt sections are about 1600 characters shorter. Text that pi or the tool descriptions already state is gone.
 - A spawned child replies to a task that came as a bus message, and treats a coordinator task over the bus like its first task.
+- Compared with the standalone vi extension: `p` and `P` put the vi register only. Paste the system clipboard with the terminal paste key.
+- Compared with the standalone vi extension: deletes and changes no longer reach the system clipboard. Yanks still do, unless `clipboard` is `"never"`.
+- Compared with the standalone vi extension: in normal mode, Esc no longer starts the double-Escape action of pi. The first Esc still stops a run or a `!` command.
+- Compared with the standalone vi extension: `j` and `k` move by logical lines and do not browse the prompt history. The arrow keys still do. Counts before `i a A I o O` have no effect.
 
 ### Removed
 
 - The `pi_agents` parameter `where`. It had no effect.
+- Compared with the standalone vi extension: ex commands such as `:q`, the `{` and `}` motions, `gJ`, and the `piVim.clipboardMirror` setting. Use the vi option `clipboard`.
 
 ## [0.11.0] - 2026-11-08
 
