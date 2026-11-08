@@ -4,6 +4,17 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-08
+
+### Added
+
+- `bus` feature with the `pi_bus` tool and the `/bus` commands. Moved from the standalone extension. Reply to a message with its `messageId` as `corrId`. Address a coordinator as `owner:<id>`, which stays the same across reloads. A send reports each recipient as `delivered`, `unconfirmed`, or `failed`. The bus identity reaches the status line on the pimon event bus.
+- `agents` feature with the `pi_agents` tool and the `/agents` commands. Moved from the standalone extension. The parent gives the task and the control token to a child in a private spawn file, not in argv or env. A spawn says `Task delivered.` only after the child read its spawn file and joined the bus. Children start only in Herdr panes. A role with `mcp: false` starts its children without MCP servers. Children start with the parent's agent dir.
+
+### Removed
+
+- Compared with the standalone extension: tmux, kitty, and terminal placements for spawned children. Records of such children still load. Their panes are not managed.
+
 ## [0.9.0] - 2026-11-08
 
 ### Added
