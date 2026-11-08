@@ -256,7 +256,6 @@ function createTimerTool(timers: TimerStore) {
 		name: "timer",
 		label: "Timer",
 		description: TIMER_DESCRIPTION,
-		promptSnippet: "Wake this session later with a reason",
 		exposure: "direct",
 		parameters: timerParameters,
 		async execute(_toolCallId, params, _signal, _onUpdate, extensionCtx) {
@@ -375,9 +374,6 @@ function createTool(reg: Registry, kind: Kind) {
 		name: kind,
 		label: isBackground ? "Background" : "Monitor",
 		description: isBackground ? BACKGROUND_DESCRIPTION : MONITOR_DESCRIPTION,
-		promptSnippet: isBackground
-			? "Run long local commands detached with actions start/list/status/logs/stop"
-			: "Watch output for a specific pattern with actions start/edit/list/status/logs/stop",
 		parameters: isBackground ? backgroundParameters : monitorParameters,
 		async execute(_toolCallId, params, _signal, _onUpdate, extensionCtx) {
 			bindSession(reg, extensionCtx);

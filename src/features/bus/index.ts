@@ -26,7 +26,6 @@ import { BusStore, prepareHistory, type StoreSnapshot } from "./store.ts";
 import {
 	type ActionHost,
 	BUS_TOOL_DESCRIPTION,
-	BUS_TOOL_SNIPPET,
 	type BusToolInput,
 	busToolSchema,
 	runToolAction,
@@ -654,7 +653,6 @@ export const bus = defineFeature({
 			name: "pi_bus",
 			label: "Pi Bus",
 			description: BUS_TOOL_DESCRIPTION,
-			promptSnippet: BUS_TOOL_SNIPPET,
 			parameters: busToolSchema,
 			prepareArguments(args) {
 				if (!args || typeof args !== "object") return args as never;

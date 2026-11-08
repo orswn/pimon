@@ -349,7 +349,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				name: CLAIM_TOOL,
 				label: "Goal Done",
 				description: CLAIM_DESCRIPTION,
-				promptSnippet: "Claim the active goal is complete, with evidence, for independent adjudication",
 				executionMode: "sequential",
 				exposure: "model-only",
 				parameters: Type.Object({

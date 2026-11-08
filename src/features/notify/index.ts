@@ -29,7 +29,6 @@ declare module "../../core/events.ts" {
 
 const NOTIFY_DESCRIPTION =
 	'Send the human a desktop and phone notification. Use it only for out-of-band attention: kind="blocked" when you cannot continue without the human, kind="done" when unattended work finishes, kind="info" for anything else. It does not replace an ordinary response when the human is present.';
-const NOTIFY_SNIPPET = "Notify the human on desktop and phone when blocked or when unattended work finishes";
 const BLOCKED_ALONE_REASON =
 	'notify kind="blocked" must be the only tool call in its message, and cannot be called from codemode. Call it alone.';
 
@@ -68,7 +67,6 @@ export function createNotifyFeature(options: NotifyFeatureOptions = {}) {
 				name: "notify",
 				label: "Notify",
 				description: NOTIFY_DESCRIPTION,
-				promptSnippet: NOTIFY_SNIPPET,
 				parameters: notifyParameters,
 				async execute(_id, params, signal) {
 					const kind = params.kind as NotifyKind;

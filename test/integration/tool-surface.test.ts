@@ -14,16 +14,19 @@ describe("registered tool text", () => {
 		const tools = harness.session.extensionRunner.getAllRegisteredTools().map(({ definition }) => definition);
 		const text = tools
 			.map((tool) =>
-				[
-					`## ${tool.name}`,
-					"",
-					`description: ${tool.description}`,
-					`promptSnippet: ${tool.promptSnippet ?? ""}`,
-					`promptGuidelines: ${JSON.stringify(tool.promptGuidelines ?? [])}`,
-					`schema: ${JSON.stringify(tool.parameters)}`,
-				].join("\n"),
+				[`## ${tool.name}`, "", `description: ${tool.description}`, `schema: ${JSON.stringify(tool.parameters)}`].join(
+					"\n",
+				),
 			)
 			.join("\n\n");
 		await expect(`${text}\n`).toMatchFileSnapshot("__snapshots__/tool-surface.md");
+	});
+
+	it("adds no line to pi's tool list, because each description already says it", async () => {
+		harness = await createHarness({ features });
+		const tools = harness.session.extensionRunner.getAllRegisteredTools().map(({ definition }) => definition);
+		expect(tools.length).toBeGreaterThan(0);
+		expect(tools.filter((tool) => tool.promptSnippet !== undefined).map((tool) => tool.name)).toEqual([]);
+		expect(tools.filter((tool) => tool.promptGuidelines !== undefined).map((tool) => tool.name)).toEqual([]);
 	});
 });

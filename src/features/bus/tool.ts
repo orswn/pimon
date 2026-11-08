@@ -12,8 +12,6 @@ import type { BusStore } from "./store.ts";
 export const BUS_TOOL_DESCRIPTION =
 	"Message other running pi instances on this host. Addressing uses selectors such as owner:<hex>, all, role:reviewer, name:x, children, topic:t. Sending never blocks: replies arrive later on their own.";
 
-export const BUS_TOOL_SNIPPET = "Message other running pi agent instances over the local bus.";
-
 const INBOX_BODY_CHARS = 140;
 
 export const busToolSchema = Type.Object({

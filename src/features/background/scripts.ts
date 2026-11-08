@@ -442,10 +442,6 @@ export function createScriptTools(deps: ScriptToolDeps) {
 			name: `${kind}_codemode`,
 			label: kind === "background" ? "Background Codemode" : "Monitor Codemode",
 			description: kind === "background" ? BACKGROUND_CODEMODE_DESCRIPTION : MONITOR_CODEMODE_DESCRIPTION,
-			promptSnippet:
-				kind === "background"
-					? "Run a codemode script as a background job that wakes you on exit"
-					: "Run a codemode script whose emitted lines wake you on a match",
 			// Scripts must not start scripts.
 			exposure: "model-only",
 			parameters: kind === "background" ? backgroundCodemodeParameters : monitorCodemodeParameters,

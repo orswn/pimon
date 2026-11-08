@@ -17,7 +17,6 @@ import { ChildRecords } from "./records.ts";
 import { type AgentPaths, agentPaths } from "./spawn-file.ts";
 import {
 	AGENTS_TOOL_DESCRIPTION,
-	AGENTS_TOOL_SNIPPET,
 	type AgentsHost,
 	type AgentsToolInput,
 	agentsToolSchema,
@@ -88,7 +87,6 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				name: "pi_agents",
 				label: "Pi Agents",
 				description: AGENTS_TOOL_DESCRIPTION,
-				promptSnippet: AGENTS_TOOL_SNIPPET,
 				parameters: agentsToolSchema,
 				async execute(toolCallId, params, signal, _onUpdate, extCtx) {
 					const result = await runToolAction(host, extCtx, params as AgentsToolInput, toolCallId, signal);

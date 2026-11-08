@@ -26,7 +26,6 @@ const MANDATORY_CHILD_TOOLS = ["pi_bus", "codemode"];
 
 export const AGENTS_TOOL_DESCRIPTION =
 	"Start and manage visible child pi instances, each in its own Herdr tab. A child runs a role from the user roles directory or a session role, or a project role with projectRoles, and reports back over pi_bus. Spawning never waits for the child's work.";
-export const AGENTS_TOOL_SNIPPET = "Delegate work to visible child pi instances and manage their lifecycle.";
 
 export const agentsToolSchema = Type.Object({
 	action: StringEnum([
