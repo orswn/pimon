@@ -256,7 +256,7 @@ export function flush(reg: Registry, state: JobState): void {
 		state,
 		matchDigest({
 			name: options.name,
-			command: options.command,
+			command: options.generatedName ? options.command : undefined,
 			matchSource: patternLabel(options),
 			lines: batch,
 			totalMatched: total,
@@ -437,7 +437,7 @@ function armTimeout(reg: Registry, state: JobState): void {
 			state,
 			[
 				`${label(state)} hit its ${formatDuration(state.options.timeoutMs)} timeout and is being killed.`,
-				`Command: ${state.options.command}`,
+				...(state.options.generatedName ? [`Command: ${state.options.command}`] : []),
 				`Partial output is in ${state.sink.path}.`,
 			].join("\n"),
 		);

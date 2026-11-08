@@ -115,6 +115,12 @@ describe("matchDigest and renderBlock", () => {
 		expect(match).toContain("Pattern: failed");
 	});
 
+	it("names the command only when it is given, for a monitor with a generated name", () => {
+		const base = { name: "pr", matchSource: "failed", lines: ["x failed"], totalMatched: 1, logFile: "/tmp/z.log" };
+		expect(matchDigest(base)).not.toContain("Command:");
+		expect(matchDigest({ ...base, command: "gh pr checks" }).split("\n")[1]).toBe("Command: gh pr checks");
+	});
+
 	it("renderBlock reports no output", () => {
 		expect(renderBlock([], EXIT_BUDGET).join("\n")).toContain("<no output captured>");
 	});

@@ -90,7 +90,8 @@ export function scriptExitDigest(info: ScriptExitInfo): string {
 
 interface MatchInfo {
 	name: string;
-	command: string;
+	/** Only for a job whose name does not identify it. */
+	command?: string | undefined;
 	matchSource: string;
 	lines: readonly string[];
 	totalMatched: number;
@@ -100,7 +101,7 @@ interface MatchInfo {
 export function matchDigest(info: MatchInfo): string {
 	return [
 		`Monitor "${info.name}" matched ${info.totalMatched} line(s).`,
-		`Command: ${info.command}`,
+		...(info.command === undefined ? [] : [`Command: ${info.command}`]),
 		`Pattern: ${info.matchSource}`,
 		...renderBlock(info.lines, MATCH_BUDGET, info.totalMatched),
 		`Full log: ${info.logFile}`,

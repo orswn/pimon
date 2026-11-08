@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Changed
+
+- The monitor match digest and the timeout notice name the command only for a job with a generated name.
+
 ### Fixed
 
 - The statusline no longer makes the prompt editor about 3 times slower on a long prompt.

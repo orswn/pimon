@@ -273,6 +273,33 @@ describe("monitor matching", () => {
 		expect(state.muted).toBe(false);
 	});
 
+	it("names the command in a match digest only for a monitor with a generated name", async () => {
+		const named = monitor({ command: "echo NAMED-HIT; sleep 0.4", matchSource: "NAMED-HIT", debounceMs: 50 });
+		const anon = monitor({
+			command: "echo ANON-HIT; sleep 0.4",
+			matchSource: "ANON-HIT",
+			debounceMs: 50,
+			generatedName: true,
+		});
+		start(named);
+		start(anon);
+		const matched = (name: string) => emitsFor(name).find((text) => text.includes("matched")) ?? "";
+		expect(await waitFor(() => matched(named.name) !== "" && matched(anon.name) !== "")).toBe(true);
+		expect(matched(named.name)).not.toContain("Command:");
+		expect(matched(anon.name).split("\n")[1]).toBe("Command: echo ANON-HIT; sleep 0.4");
+	});
+
+	it("names the command in a timeout notice only for a job with a generated name", async () => {
+		const named = opts({ command: "sleep 5", timeoutMs: 200 });
+		const anon = opts({ command: "sleep 5", timeoutMs: 200, generatedName: true });
+		const states = [start(named), start(anon)];
+		const notice = (name: string) => emitsFor(name).find((text) => text.includes("timeout")) ?? "";
+		expect(await waitFor(() => notice(named.name) !== "" && notice(anon.name) !== "")).toBe(true);
+		expect(notice(named.name)).not.toContain("Command:");
+		expect(notice(anon.name).split("\n")[1]).toBe("Command: sleep 5");
+		for (const state of states) await exited(state);
+	});
+
 	it("once stops itself after the first batch and adds no exit digest", async () => {
 		const options = monitor({ command: "echo HIT; sleep 10", matchSource: "HIT", once: true, debounceMs: 50 });
 		const state = start(options);
