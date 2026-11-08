@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-08
+
 ### Added
 
 - README documents every feature, option, tool, command, environment name, and file, the git install source, and what semantic versioning covers.
