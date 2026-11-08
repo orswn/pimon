@@ -51,13 +51,19 @@ Tool schemas define parameters. These rules define ownership, sequencing, and ha
 <background>
 ## Background jobs and monitors
 
-- Use `background` for a long command whose completion matters. Use `monitor` instead when a matching line matters before process exit. Choose one owner when launching the command.
+- Run a command that ends within about one minute with `bash`. Use `background` for a longer command, or when independent work can continue while it runs. Use `monitor` instead when a matching line matters before process exit. Choose one owner when launching the command.
 - A `background` job wakes on exit. Inspect its bounded digest first. Use its `logs` or `status` action when more evidence is needed. Never rerun the command merely to recover output.
 - A `monitor` owns the command it watches. Arm it with the specific line that changes what should happen next. Broad matches are not progress tracking.
 - Background and monitor notifications report process facts. Reconcile them with the current objective before acting.
-- Use `timer` to come back later.
-- Use `background_codemode` or `monitor_codemode` for async work that needs pi or MCP tools. Use shell jobs only for shell commands.
 </background>
+
+<timer>
+- Use `timer` to come back later.
+</timer>
+
+<scripts>
+- Use `background_codemode` or `monitor_codemode` for async work that needs pi or MCP tools. Use shell jobs only for shell commands.
+</scripts>
 
 <notify>
 ## Human attention

@@ -15,6 +15,8 @@ interface BaseOptions {
 	notifyExit: boolean;
 	logFile: string;
 	logMaxBytes: number;
+	/** The name came from `<kind>-<n>`, so it does not say what the job runs. */
+	generatedName?: boolean;
 }
 
 interface MonitorExtras {
@@ -50,7 +52,7 @@ export const LIMITS = {
 	defaultBackgroundTimeoutMs: 30 * 60_000,
 	defaultDebounceMs: 250,
 	maxDebounceMs: 60_000,
-	defaultMaxPerMinute: 20,
+	defaultMaxPerMinute: 6,
 	maxMaxPerMinute: 600,
 	logMaxBytes: 32 * 1024 * 1024,
 	logTailBytes: 512 * 1024,
@@ -164,6 +166,7 @@ export function buildOptions(kind: Kind, raw: Record<string, unknown>, deps: Bui
 		notifyExit: raw["notifyExit"] !== false,
 		logFile,
 		logMaxBytes: LIMITS.logMaxBytes,
+		...(str(raw["name"]).trim() === "" ? { generatedName: true } : {}),
 	};
 
 	if (kind === "background") return base;

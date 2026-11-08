@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, type FauxResponseStep, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
@@ -44,8 +44,31 @@ describe("ask-secret redacts wakes", () => {
 		clearReloadState();
 	});
 
-	it("redacts a secret that a background job prints in its exit digest", async () => {
+	it("redacts a secret that a fast background job prints in its inline digest", async () => {
 		harness = await createHarness({ features: [askSecret, background] });
+		harness.respond([
+			call("background", { action: "start", name: "leak", command: 'echo "got $PI_SECRET_DB"' }),
+			say("saw the digest"),
+		]);
+		await harness.session.prompt(`run it with [[secret DB:${SECRET}]]`);
+		await harness.waitForRequests(2);
+		await harness.session.waitForIdle();
+
+		const result = JSON.stringify(harness.requests[1]);
+		expect(result).toContain('Background job \\"leak\\" ended');
+		expect(result).toContain("got $PI_SECRET_DB");
+		expect(result).not.toContain(SECRET);
+		expect(customEntries(harness, "background")).toEqual([]);
+		expect(JSON.stringify(harness.session.sessionManager.getEntries())).not.toContain(SECRET);
+		expect(harness.extensionErrors).toEqual([]);
+	});
+
+	it("redacts a secret that a background job prints in its exit digest", async () => {
+		harness = await createHarness({
+			features: [askSecret, background],
+			setupAgentDir: (dir) =>
+				writeFileSync(join(dir, "pimon.json"), JSON.stringify({ features: { background: { inlineWaitMs: 0 } } })),
+		});
 		harness.respond([
 			call("background", { action: "start", name: "leak", command: 'echo "got $PI_SECRET_DB"' }),
 			say("started"),

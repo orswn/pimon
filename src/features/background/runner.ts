@@ -391,22 +391,40 @@ function finish(reg: Registry, state: JobState, status: string): void {
 	]
 		.filter(Boolean)
 		.join(" ");
-	emit(
-		reg,
-		state,
-		exitDigest({
-			kind: state.options.kind,
-			name: state.options.name,
-			command: state.options.command,
-			cwd: state.options.cwd,
-			status,
-			runtimeMs: runtimeMs(state),
-			tail: state.tail,
-			totalLines: state.totalLines,
-			logFile: state.sink.path,
-			logNote: notes || undefined,
-		}),
-	);
+	const digest = exitDigest({
+		kind: state.options.kind,
+		name: state.options.name,
+		// An inline digest is the result of the call that holds the command.
+		command: state.options.generatedName && !state.takeDigest ? state.options.command : undefined,
+		status,
+		runtimeMs: runtimeMs(state),
+		tail: state.tail,
+		totalLines: state.totalLines,
+		logFile: state.sink.path,
+		logNote: notes || undefined,
+	});
+	if (state.takeDigest) state.takeDigest(digest);
+	else emit(reg, state, digest);
+}
+
+/** Resolves with the exit digest when the job ends within `timeoutMs`. Otherwise the digest wakes as usual. */
+export function awaitExitDigest(state: JobState, timeoutMs: number, signal?: AbortSignal): Promise<string | undefined> {
+	if (state.exitedAt !== undefined || signal?.aborted) return Promise.resolve(undefined);
+	return new Promise((resolve) => {
+		const done = (digest: string | undefined) => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", onAbort);
+			state.takeDigest = undefined;
+			resolve(digest);
+		};
+		const onAbort = () => done(undefined);
+		const timer = setTimeout(() => done(undefined), timeoutMs);
+		timer.unref();
+		signal?.addEventListener("abort", onAbort, { once: true });
+		state.takeDigest = done;
+		// A silent or stopped job ends without a digest.
+		void state.exited.then(() => done(undefined));
+	});
 }
 
 function armTimeout(reg: Registry, state: JobState): void {

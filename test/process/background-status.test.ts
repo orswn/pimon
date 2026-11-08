@@ -63,7 +63,7 @@ async function startJob(kind: Kind, name: string, command: string): Promise<void
 
 const optionsLine: Record<Kind, string> = {
 	background: "timeoutMs=0; notifyExit=true",
-	monitor: 'match="NEVER" (literal); streams=stdout; once=false; debounceMs=250; maxPerMinute=20; timeoutMs=0',
+	monitor: 'match="NEVER" (literal); streams=stdout; once=false; debounceMs=250; maxPerMinute=6; timeoutMs=0',
 };
 
 describe.each(["background", "monitor"] as const)("%s status", (kind) => {

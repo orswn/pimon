@@ -54,6 +54,7 @@ All features are on by default. The list is in load order.
 - Purpose: background jobs that wake the model on exit, monitors that wake it on a matching line, and timers.
 - Options:
   - `maxScriptJobs`: integer, default `4`, from `1` to `16`. Codemode script jobs that can run at one time.
+  - `inlineWaitMs`: integer, default `5000`, from `0` to `30000`. A `background` start waits this long for the job to exit. A job that exits in time returns its exit digest at once and sends no wake. `0` turns the wait off.
 - Tools: `background`, `monitor`, `timer`, `background_codemode`, `monitor_codemode`.
 - Commands: `/background`, `/monitor`, `/timers`.
 - External commands: the job commands, through `/bin/sh`.

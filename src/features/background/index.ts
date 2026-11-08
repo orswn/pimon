@@ -14,7 +14,7 @@ import { describeLiveness, verifyGroup } from "./identity.ts";
 import { deleteLease } from "./leases.ts";
 import { readTail } from "./logsink.ts";
 import { buildOptions, type Kind, LIMITS, parseMonitorEdit } from "./options.ts";
-import { BACKGROUND_PROMPT } from "./prompt.ts";
+import { BACKGROUND_PROMPT, SCRIPTS_PROMPT, TIMER_PROMPT } from "./prompt.ts";
 import { foreignLogFile, foreignOwner, refreshOrphans, sweepLeases } from "./recovery.ts";
 import {
 	activeJobs,
@@ -35,7 +35,7 @@ import {
 	routeDigest,
 	runtimeMs,
 } from "./registry.ts";
-import { describeStop, dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
+import { awaitExitDigest, describeStop, dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
 import {
 	CODEMODE_PACKAGE,
 	createEngineCache,
@@ -103,6 +103,7 @@ const KIND_ACTIONS = {
 const configSchema = Type.Object(
 	{
 		maxScriptJobs: Type.Integer({ minimum: 1, maximum: 16, default: SCRIPT_LIMITS.defaultMaxScriptJobs }),
+		inlineWaitMs: Type.Integer({ minimum: 0, maximum: 30_000, default: 5_000 }),
 	},
 	{ additionalProperties: false },
 );
@@ -127,8 +128,14 @@ export const background = defineFeature({
 			requiresTools: ["background", "monitor"],
 			render: () => BACKGROUND_PROMPT,
 		});
-		ctx.pi.registerTool(createTool(reg, "background"));
-		ctx.pi.registerTool(createTool(reg, "monitor"));
+		ctx.promptSection({ name: "timer", requiresTools: ["timer"], render: () => TIMER_PROMPT });
+		ctx.promptSection({
+			name: "scripts",
+			requiresTools: ["background_codemode", "monitor_codemode"],
+			render: () => SCRIPTS_PROMPT,
+		});
+		ctx.pi.registerTool(createTool(reg, "background", ctx.config.inlineWaitMs));
+		ctx.pi.registerTool(createTool(reg, "monitor", 0));
 		ctx.pi.registerTool(createTimerTool(timers));
 		const scripts = ctx.reloadState("scripts", 1, createScriptStore);
 		const engine = ctx.reloadState("engine", 1, createEngineCache);
@@ -212,7 +219,7 @@ export const TIMER_DESCRIPTION =
 	'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work. During an active goal, also set one while waiting on a job, monitor, or bus reply. Timers end with the pi process.';
 
 export const timerParameters = Type.Object({
-	action: StringEnum(["set", "list", "cancel"] as const, { description: "set, list, or cancel" }),
+	action: StringEnum(["set", "list", "cancel"] as const),
 	name: Type.Optional(
 		Type.String({
 			minLength: 1,
@@ -320,7 +327,7 @@ function deliver(wake: (message: WakeMessage) => void, reg: Registry, state: Job
 }
 
 export const backgroundParameters = Type.Object({
-	action: StringEnum(KIND_ACTIONS.background, { description: "start, list, status, logs, or stop" }),
+	action: StringEnum(KIND_ACTIONS.background),
 	command: Type.Optional(Type.String({ description: "Shell command to run (start)" })),
 	name: Type.Optional(Type.String({ description: "Job name; letters, digits, dot, dash, underscore" })),
 	cwd: Type.Optional(Type.String({ description: "Working directory (default: session cwd)" })),
@@ -334,26 +341,21 @@ export const backgroundParameters = Type.Object({
 });
 
 export const monitorParameters = Type.Object({
-	action: StringEnum(KIND_ACTIONS.monitor, { description: "start, edit, list, status, logs, or stop" }),
+	action: StringEnum(KIND_ACTIONS.monitor),
 	command: Type.Optional(Type.String({ description: "Shell command to watch (start)" })),
 	name: Type.Optional(Type.String({ description: "Job name; letters, digits, dot, dash, underscore" })),
 	match: Type.Optional(
 		Type.String({
-			description:
-				"Required for start. A literal substring by default; regex characters are rejected unless regex=true. Matched per line; lines over 16 000 characters are split, so a match spanning the split is missed",
+			description: "Required for start. Literal substring, or a regex with regex=true. Matched per line.",
 		}),
 	),
-	regex: Type.Optional(
-		Type.Boolean({ description: "Treat match as a regex, evaluated in an isolated worker (default false)" }),
-	),
+	regex: Type.Optional(Type.Boolean({ description: "Treat match as a regex" })),
 	ignoreCase: Type.Optional(Type.Boolean({ description: "Case-insensitive match" })),
-	stream: Type.Optional(
-		StringEnum(["stdout", "stderr", "both"] as const, { description: "stdout, stderr, or both (default stdout)" }),
-	),
+	stream: Type.Optional(StringEnum(["stdout", "stderr", "both"] as const, { description: "Default stdout" })),
 	once: Type.Optional(Type.Boolean({ description: "Stop after the first matching batch" })),
 	notifyExit: Type.Optional(Type.Boolean({ description: "Wake if the watched command exits (default true)" })),
 	debounceMs: Type.Optional(Type.Number({ description: "Batch matches for this long (default 250)" })),
-	maxPerMinute: Type.Optional(Type.Number({ description: "Mute notifications above this rate (default 20)" })),
+	maxPerMinute: Type.Optional(Type.Number({ description: "Mute notifications above this rate (default 6)" })),
 	timeoutMs: Type.Optional(Type.Number({ description: "Kill the watcher after this long; 0 disables (default 0)" })),
 	logFile: Type.Optional(Type.String({ description: "Log file path; relative paths resolve against cwd" })),
 	cwd: Type.Optional(Type.String({ description: "Working directory (default: session cwd)" })),
@@ -364,21 +366,21 @@ export const monitorParameters = Type.Object({
 });
 
 export const BACKGROUND_DESCRIPTION =
-	"Run a long-running local command in the background. Actions: start, list, status, logs, stop. It reports nothing while running and wakes you once when the process exits; read output with action=logs. Use for tests, builds, and benchmarks. Pass timeoutMs=0 for a server that should run until stopped.";
+	"Run a long-running local command in the background. It reports nothing while running and wakes you once when the process exits; read output with action=logs. A job that exits within a few seconds returns its digest at once. Use for tests, builds, and benchmarks. Pass timeoutMs=0 for a server that should run until stopped. Shell jobs and monitors survive reloads and session switches; pi quit stops them.";
 export const MONITOR_DESCRIPTION =
-	"Watch a command's output and wake the agent when a line matches. Actions: start, edit, list, status, logs, stop. match is a literal substring by default; pass regex=true for a regex. Use for CI/PR polling, log watching, and readiness probes.";
+	"Watch a command's output and wake the agent when a line matches. Use for CI/PR polling, log watching, and readiness probes.";
 
-function createTool(reg: Registry, kind: Kind) {
+function createTool(reg: Registry, kind: Kind, inlineWaitMs: number) {
 	const isBackground = kind === "background";
 	return defineTool({
 		name: kind,
 		label: isBackground ? "Background" : "Monitor",
 		description: isBackground ? BACKGROUND_DESCRIPTION : MONITOR_DESCRIPTION,
 		parameters: isBackground ? backgroundParameters : monitorParameters,
-		async execute(_toolCallId, params, _signal, _onUpdate, extensionCtx) {
+		async execute(_toolCallId, params, signal, _onUpdate, extensionCtx) {
 			bindSession(reg, extensionCtx);
 			const raw = params as Record<string, unknown>;
-			const result = await runAction(reg, kind, raw, extensionCtx.cwd);
+			const result = await runAction(reg, kind, raw, extensionCtx.cwd, { inlineWaitMs, signal });
 			return typeof result === "string"
 				? { content: [{ type: "text", text: result }], details: { action: raw["action"] } }
 				: { content: [{ type: "text", text: renderLogs(result) }], details: result };
@@ -405,11 +407,12 @@ export async function runAction(
 	kind: Kind,
 	params: Record<string, unknown>,
 	defaultCwd: string,
+	options: StartOptions = {},
 ): Promise<ActionResult> {
 	const action = str(params["action"]);
 	switch (action) {
 		case "start":
-			return start(reg, kind, params, defaultCwd);
+			return start(reg, kind, params, defaultCwd, options);
 		case "edit":
 			return kind === "monitor"
 				? edit(reg, params)
@@ -427,7 +430,19 @@ export async function runAction(
 	}
 }
 
-function start(reg: Registry, kind: Kind, params: Record<string, unknown>, defaultCwd: string): string {
+interface StartOptions {
+	/** How long a `background` start waits for the exit digest. 0 returns at once. */
+	inlineWaitMs?: number | undefined;
+	signal?: AbortSignal | undefined;
+}
+
+async function start(
+	reg: Registry,
+	kind: Kind,
+	params: Record<string, unknown>,
+	defaultCwd: string,
+	{ inlineWaitMs = 0, signal }: StartOptions,
+): Promise<string> {
 	if (
 		kind === "background" &&
 		(params["match"] !== undefined || params["regex"] !== undefined || params["debounceMs"] !== undefined)
@@ -448,17 +463,18 @@ function start(reg: Registry, kind: Kind, params: Record<string, unknown>, defau
 
 	const started = startJob(reg, options, reg.sessionId);
 	if (!started.ok) return started.error;
-	return describeStart(started.state);
+	if (kind === "background" && inlineWaitMs > 0) {
+		const digest = await awaitExitDigest(started.state, inlineWaitMs, signal);
+		if (digest !== undefined) return digest;
+	}
+	return describeStart(started.state, defaultCwd);
 }
 
-export const LIFETIME_NOTE =
-	"It keeps running across reloads and session switches until it exits, times out, or is stopped. pi quit stops it. Only this session is woken by it.";
-
-function describeStart(state: JobState): string {
+function describeStart(state: JobState, sessionCwd: string): string {
 	const options = state.options;
 	const lines = [
-		`Started ${options.kind} "${options.name}" (pid ${state.pid ?? "unknown"}): ${options.command}`,
-		`Cwd: ${options.cwd}`,
+		`Started ${options.kind} "${options.name}" (pid ${state.pid ?? "unknown"}).`,
+		...(options.cwd === sessionCwd ? [] : [`Cwd: ${options.cwd}`]),
 		`Log: ${options.logFile}`,
 	];
 	if (isMonitor(state)) {
@@ -469,11 +485,10 @@ function describeStart(state: JobState): string {
 	} else {
 		lines.push(
 			options.notifyExit
-				? `You will be woken once when it exits${options.timeoutMs > 0 ? `, or after ${formatDuration(options.timeoutMs)}` : ""}. Read output with background action=logs name=${options.name}.`
-				: `Silent job. Read output with background action=logs name=${options.name}.`,
+				? `You will be woken once when it exits${options.timeoutMs > 0 ? `, or after ${formatDuration(options.timeoutMs)}` : ""}.`
+				: "Silent job: no wake on exit.",
 		);
 	}
-	lines.push(LIFETIME_NOTE);
 	if (!state.identity)
 		lines.push(
 			"No process identity available, so no crash-recovery lease was written: if pi dies hard, this job is untracked.",

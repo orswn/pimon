@@ -40,8 +40,6 @@ describe("exitDigest", () => {
 	const digest = exitDigest({
 		kind: "background",
 		name: "tests",
-		command: "pnpm test",
-		cwd: "/repo",
 		status: "exit code 1",
 		runtimeMs: 42_000,
 		tail: many,
@@ -59,6 +57,31 @@ describe("exitDigest", () => {
 		expect(digest).not.toContain("Continue");
 	});
 
+	it("leaves out the command and cwd that the start call already holds", () => {
+		const lines = digest.split("\n");
+		expect(lines[0]).toBe('Background job "tests" ended: exit code 1 after 42s.');
+		expect(lines[1]).toBe("Output tail (40 of 100 line(s)):");
+		expect(lines.at(-1)).toBe("Full log: /tmp/x.log");
+		expect(lines.filter((line) => /^(Command|Cwd): /.test(line))).toEqual([]);
+	});
+
+	it("names the command when it is given, for a job with a generated name", () => {
+		const named = exitDigest({
+			kind: "background",
+			name: "background-3",
+			command: "pnpm test",
+			status: "exit code 0",
+			runtimeMs: 5,
+			tail: [],
+			totalLines: 0,
+			logFile: "/tmp/z.log",
+		});
+		expect(named.split("\n").slice(0, 2)).toEqual([
+			'Background job "background-3" ended: exit code 0 after 5ms.',
+			"Command: pnpm test",
+		]);
+	});
+
 	it("reports the real line count and the exit status", () => {
 		expect(digest).toContain("of 100 line(s)");
 		expect(digest).toContain("exit code 1");
@@ -68,8 +91,6 @@ describe("exitDigest", () => {
 		const empty = exitDigest({
 			kind: "background",
 			name: "quiet",
-			command: "true",
-			cwd: "/repo",
 			status: "exit code 0",
 			runtimeMs: 5,
 			tail: [],

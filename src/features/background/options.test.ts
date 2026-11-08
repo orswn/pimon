@@ -124,7 +124,8 @@ describe("buildOptions", () => {
 		expect(mon.streams).toEqual(new Set(["stdout"]));
 		expect(mon.timeoutMs).toBe(0);
 		expect(mon.debounceMs).toBe(LIMITS.defaultDebounceMs);
-		expect(mon.maxPerMinute).toBe(LIMITS.defaultMaxPerMinute);
+		expect(mon.maxPerMinute).toBe(6);
+		expect(built("monitor", { command: "x", match: "y", maxPerMinute: 600 }).maxPerMinute).toBe(600);
 	});
 
 	it("validates names", () => {

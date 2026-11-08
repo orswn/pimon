@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import {
 	BACKGROUND_DESCRIPTION,
 	backgroundParameters,
-	LIFETIME_NOTE,
 	MONITOR_DESCRIPTION,
 	monitorParameters,
 	parseCliParams,
@@ -44,15 +43,17 @@ describe("session start notices", () => {
 });
 
 describe("tool text", () => {
-	it("describes the true lifetime of a job", () => {
-		expect(LIFETIME_NOTE).toBe(
-			"It keeps running across reloads and session switches until it exits, times out, or is stopped. pi quit stops it. Only this session is woken by it.",
+	it("describes the true lifetime of a job and the inline digest", () => {
+		expect(BACKGROUND_DESCRIPTION).toContain(
+			"Shell jobs and monitors survive reloads and session switches; pi quit stops them.",
 		);
+		expect(BACKGROUND_DESCRIPTION).toContain("A job that exits within a few seconds returns its digest at once.");
+		expect(BACKGROUND_DESCRIPTION).not.toContain("inlineWaitMs");
 	});
 
 	it("background tells servers to disable the timeout", () => {
 		expect(BACKGROUND_DESCRIPTION).toContain("Pass timeoutMs=0 for a server that should run until stopped.");
-		expect(MONITOR_DESCRIPTION).toContain("match is a literal substring by default");
+		expect(MONITOR_DESCRIPTION).toContain("wake the agent when a line matches");
 	});
 
 	it("timer says what it does and how long it lives", () => {

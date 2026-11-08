@@ -43,8 +43,8 @@ export function renderBlock(lines: readonly string[], budget: Budget, totalKnown
 interface ExitInfo {
 	kind: "monitor" | "background";
 	name: string;
-	command: string;
-	cwd: string;
+	/** Only for a job whose name does not identify it. */
+	command?: string | undefined;
 	status: string;
 	runtimeMs: number;
 	tail: readonly string[];
@@ -57,8 +57,7 @@ export function exitDigest(info: ExitInfo): string {
 	const noun = info.kind === "background" ? "Background job" : "Monitor";
 	const lines = [
 		`${noun} "${info.name}" ended: ${info.status} after ${formatDuration(info.runtimeMs)}.`,
-		`Command: ${info.command}`,
-		`Cwd: ${info.cwd}`,
+		...(info.command === undefined ? [] : [`Command: ${info.command}`]),
 		...renderBlock(info.tail, EXIT_BUDGET, info.totalLines),
 		`Full log: ${info.logFile}`,
 	];

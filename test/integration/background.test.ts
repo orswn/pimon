@@ -54,8 +54,31 @@ describe("background in a session", () => {
 		clearReloadState();
 	});
 
-	it("starts a job through a tool call and its exit digest arrives as a custom message that triggers a turn", async () => {
+	it("returns the exit digest of a fast job as the tool result and starts no extra turn", async () => {
 		harness = await createHarness({ features: [background] });
+		harness.respond([
+			call("background", { action: "start", name: "lint", command: "echo LINT-OK; exit 1" }),
+			say("saw the digest"),
+		]);
+		await harness.session.prompt("run the lint");
+		const result = toolTexts(harness.requests[1]).join("\n");
+		expect(result).toMatch(/^Background job "lint" ended: exit code 1 after \d+ms\.$/m);
+		expect(result).toContain("LINT-OK");
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(harness.requests).toHaveLength(2);
+		const custom = harness.session.sessionManager
+			.getEntries()
+			.filter((entry) => entry.type === "custom_message" && entry.customType === "background");
+		expect(custom).toEqual([]);
+		expect(harness.extensionErrors).toEqual([]);
+	});
+
+	it("starts a job through a tool call and its exit digest arrives as a custom message that triggers a turn", async () => {
+		harness = await createHarness({
+			features: [background],
+			setupAgentDir: (dir) =>
+				writeFileSync(join(dir, "pimon.json"), JSON.stringify({ features: { background: { inlineWaitMs: 100 } } })),
+		});
 		harness.respond([
 			call("background", { action: "start", name: "build", command: "echo BUILD-OK; sleep 0.3; exit 2" }),
 			say("started"),
@@ -64,9 +87,7 @@ describe("background in a session", () => {
 		await harness.session.prompt("run the build");
 		const started = toolTexts(harness.requests[1]).join("\n");
 		expect(started).toContain('Started background "build"');
-		expect(started).toContain(
-			"It keeps running across reloads and session switches until it exits, times out, or is stopped. pi quit stops it. Only this session is woken by it.",
-		);
+		expect(started).toContain("You will be woken once when it exits");
 
 		await harness.waitForRequests(3);
 		const woken = JSON.stringify(harness.requests[2]);

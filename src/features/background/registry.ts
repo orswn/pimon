@@ -50,6 +50,8 @@ export interface JobState {
 	exitStatus: string | undefined;
 	exited: Promise<void>;
 	markExited: () => void;
+	/** Set while a start call waits inline. It takes the exit digest instead of a wake. */
+	takeDigest?: ((text: string) => void) | undefined;
 	kill: (signal: NodeJS.Signals) => void;
 	liveness: () => Liveness;
 }

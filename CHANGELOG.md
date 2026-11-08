@@ -7,6 +7,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 ### Added
 
 - README documents every feature, option, tool, command, environment name, and file, the git install source, and what semantic versioning covers.
+- `background` start waits up to `inlineWaitMs` (default 5000 ms) and returns the exit digest of a job that ends in that time. No wake is sent for such a job.
 
 ### Changed
 
@@ -14,6 +15,11 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - A bus digest shows a subject only when it differs from the thread title.
 - The goal continuation no longer repeats the timer rule of the goal section.
 - pimon tools add no line to pi's tool list. The tool definitions still carry their descriptions.
+- The background section tells the model to run a command that ends within about one minute with `bash`. The timer and codemode lines are separate sections, left out when their tools are absent.
+- The `background` and `monitor` start result no longer repeats the command, the lifetime note, or the read hint. It names the cwd only when it differs from the session cwd.
+- The exit digest no longer names the cwd. It names the command only for a job with a generated name.
+- Shorter `background`, `monitor`, and `timer` tool text.
+- The monitor `maxPerMinute` default is 6, down from 20.
 
 ## [0.12.1] - 2026-11-08
 
