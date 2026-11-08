@@ -56,7 +56,7 @@ export function createNotifyFeature(options: NotifyFeatureOptions = {}) {
 			const notifier = createNotifier({ exec: options.exec ?? runner.run });
 			ctx.onSessionShutdown(() => runner.terminateAll());
 
-			ctx.promptSection({ name: "notify", render: () => NOTIFY_PROMPT });
+			ctx.promptSection({ name: "notify", requiresTools: ["notify"], render: () => NOTIFY_PROMPT });
 
 			ctx.pi.on("tool_call", (event, extensionCtx) => {
 				if (event.toolName !== "notify" || (event.input as { kind?: unknown }).kind !== "blocked") return undefined;

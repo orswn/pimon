@@ -122,7 +122,11 @@ export const background = defineFeature({
 		timers.wake = wakeTimer;
 		timers.changed = timersChanged;
 
-		ctx.promptSection({ name: "background", render: () => BACKGROUND_PROMPT });
+		ctx.promptSection({
+			name: "background",
+			requiresTools: ["background", "monitor"],
+			render: () => BACKGROUND_PROMPT,
+		});
 		ctx.pi.registerTool(createTool(reg, "background"));
 		ctx.pi.registerTool(createTool(reg, "monitor"));
 		ctx.pi.registerTool(createTimerTool(timers));
@@ -205,7 +209,7 @@ function bindTimers(timers: TimerStore, extensionCtx: ExtensionContext): void {
 }
 
 export const TIMER_DESCRIPTION =
-	'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work, and as the fallback wake while waiting on a job, monitor, or bus reply. Timers end with the pi process.';
+	'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work. During an active goal, also set one while waiting on a job, monitor, or bus reply. Timers end with the pi process.';
 
 export const timerParameters = Type.Object({
 	action: StringEnum(["set", "list", "cancel"] as const, { description: "set, list, or cancel" }),
@@ -337,7 +341,7 @@ export const monitorParameters = Type.Object({
 	match: Type.Optional(
 		Type.String({
 			description:
-				"Required. A literal substring by default; regex characters are rejected unless regex=true. Matched per line; lines over 16 000 characters are split, so a match spanning the split is missed",
+				"Required for start. A literal substring by default; regex characters are rejected unless regex=true. Matched per line; lines over 16 000 characters are split, so a match spanning the split is missed",
 		}),
 	),
 	regex: Type.Optional(

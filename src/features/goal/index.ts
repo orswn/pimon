@@ -248,7 +248,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 
 			const markTerminal = () => run({ type: "terminal" });
 
-			ctx.promptSection({ name: "goal", render: () => GOAL_PROMPT });
+			ctx.promptSection({ name: "goal", requiresTools: ["goal_done"], render: () => GOAL_PROMPT });
 
 			ctx.events.on("notify:blocked", (payload) => {
 				if (!live) return undefined;

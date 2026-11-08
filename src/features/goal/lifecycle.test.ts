@@ -25,7 +25,7 @@ describe("before-settle transitions", () => {
 		]);
 		expect(result.effects[0]).toMatchObject({
 			text: expect.stringContaining(
-				"To wait for external work, arm it, then set a timer for when it should be done. A run ends only while a timer is armed.",
+				"To wait for external work, start it, then set a timer for when it should be done. A run that ends with no armed timer gets a continuation at once.",
 			) as string,
 		});
 	});

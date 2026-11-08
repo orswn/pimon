@@ -152,7 +152,7 @@ export function createAskSecret(options: AskSecretOptions = {}) {
 		description: "Get secrets from the human into commands without the model or the session file seeing them",
 		defaultEnabled: true,
 		setup(ctx) {
-			ctx.promptSection({ name: "secrets", render: () => SECRETS_PROMPT });
+			ctx.promptSection({ name: "secrets", requiresTools: ["bash"], render: () => SECRETS_PROMPT });
 			const store = new SecretStore();
 			ctx.wakeFilter((message) => redactWake(message, store));
 			// Captured once per process: a later runtime would see the value this feature set.

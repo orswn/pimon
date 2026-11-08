@@ -47,7 +47,7 @@ export const agentsToolSchema = Type.Object({
 	task: Type.Optional(Type.String({ description: "First instruction for the child. Required for spawn." })),
 	context: Type.Optional(
 		StringEnum(CONTEXT_MODES, {
-			description: "Parent context: isolated, concise handoff, or explicit full-history fork. Defaults to isolated.",
+			description: "Defaults to isolated.",
 		}),
 	),
 	brief: Type.Optional(
@@ -69,7 +69,6 @@ export const agentsToolSchema = Type.Object({
 	cwd: Type.Optional(
 		Type.String({ description: "Working directory for the child, relative to this session's cwd. Must exist." }),
 	),
-	where: Type.Optional(StringEnum(["auto", "herdr"] as const, { description: "Placement. Both values mean Herdr." })),
 	model: Type.Optional(
 		Type.String({
 			description: "Model for the child. Defaults to the role's model, then to the model this session is using.",
@@ -113,7 +112,6 @@ export interface AgentsToolInput {
 	name?: string | undefined;
 	agent?: string | undefined;
 	cwd?: string | undefined;
-	where?: string | undefined;
 	model?: string | undefined;
 	thinking?: string | undefined;
 	description?: string | undefined;

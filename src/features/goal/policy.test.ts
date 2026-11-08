@@ -59,7 +59,7 @@ describe("continuation text", () => {
 	});
 	it("tells the model how a run may end", () => {
 		expect(continuationText(record)).toContain(
-			"To wait for external work, arm it, then set a timer for when it should be done. A run ends only while a timer is armed.",
+			"To wait for external work, start it, then set a timer for when it should be done. A run that ends with no armed timer gets a continuation at once.",
 		);
 	});
 });
@@ -72,7 +72,7 @@ describe("stale texts", () => {
 
 describe("goal prompt section", () => {
 	it("holds the timer rule once and no goal_wait rule", () => {
-		expect(GOAL_PROMPT.match(/a run ends only while a `timer` is armed/g)).toHaveLength(1);
+		expect(GOAL_PROMPT.match(/a run that ends with no armed `timer` gets a continuation at once/g)).toHaveLength(1);
 		expect(GOAL_PROMPT).not.toContain("goal_wait");
 		expect(GOAL_PROMPT).not.toMatch(/\bturn\b/);
 	});

@@ -32,7 +32,7 @@ export function continuationText(record: GoalRecord, hint?: string): string {
 	if (hint) lines.push(hint);
 	lines.push(
 		"Keep working toward the active goal. Call goal_done when the condition is provably met.",
-		"To wait for external work, arm it, then set a timer for when it should be done. A run ends only while a timer is armed.",
+		"To wait for external work, start it, then set a timer for when it should be done. A run that ends with no armed timer gets a continuation at once.",
 	);
 	return lines.join("\n");
 }

@@ -46,7 +46,11 @@ export const busToolSchema = Type.Object({
 				"now: It steers the peer at its next model boundary, or starts a run when the peer is idle. never: only stores the message.",
 		}),
 	),
-	priority: Type.Optional(StringEnum(["normal", "important", "urgent"] as const)),
+	priority: Type.Optional(
+		StringEnum(["normal", "important", "urgent"] as const, {
+			description: "Only sets the level of the recipient's UI notice.",
+		}),
+	),
 	threadId: Type.Optional(
 		Type.String({
 			description:
@@ -61,7 +65,7 @@ export const busToolSchema = Type.Object({
 	),
 	data: Type.Optional(Type.Unknown({ description: "Structured payload delivered alongside the text." })),
 	expectReply: Type.Optional(
-		Type.Boolean({ description: "Track this as an open question and remind me if it lapses." }),
+		Type.Boolean({ description: "Track this as an open question and remind you if it lapses." }),
 	),
 	topic: Type.Optional(Type.String({ description: "Topic name for subscribe and unsubscribe." })),
 	limit: Type.Optional(Type.Number({ description: "Maximum results.", minimum: 1, maximum: 50 })),

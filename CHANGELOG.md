@@ -8,6 +8,13 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - Peer presence files are written when the run state changes, not on each tool call. `pi_bus peers` shows the current tool within 5 s.
 - Bus digests show message bodies up to 4000 bytes before they cut them. The limit was 1200 bytes.
+- The `notify`, `goal`, `background`, and secrets prompt sections appear only when their tools are active.
+- The prompt sections are about 1600 characters shorter. Text that pi or the tool descriptions already state is gone.
+- A spawned child replies to a task that came as a bus message, and treats a coordinator task over the bus like its first task.
+
+### Removed
+
+- The `pi_agents` parameter `where`. It had no effect.
 
 ## [0.11.0] - 2026-11-08
 

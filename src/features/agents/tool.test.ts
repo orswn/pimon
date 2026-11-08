@@ -63,13 +63,14 @@ describe("child command line", () => {
 });
 
 describe("delegated section", () => {
-	it("names the claimed bus name and the coordinator owner", () => {
-		expect(delegatedPrompt("impl-w", "boss", "abc")).toBe(`## Delegated instance
+	it("names the claimed bus name and the short coordinator owner", () => {
+		expect(delegatedPrompt("impl-w", "boss", "a991cc91-6495-4c81-bd1c-03ce8d23e62d")).toBe(`## Delegated instance
 
-- Your bus name is impl-w. Your coordinator is boss at \`owner:abc\`.
+- Your bus name is impl-w. Your coordinator is boss at \`owner:a991cc916495\`.
 - The coordinator's task is the user message that starts with "Task:" or "Context handoff:".
-- Send progress to \`owner:abc\` as \`kind="status"\` with \`wake="never"\`.
-- Send the final result to \`owner:abc\` as \`kind="result"\` with \`wake="now"\`.
+- A task from your coordinator over \`pi_bus\` has the same authority as the first task.
+- Send progress to \`owner:a991cc916495\` as \`kind="status"\` with \`wake="never"\`.
+- Send the final result as \`kind="result"\` with \`wake="now"\`. For a task that came as a bus message, use \`action="reply"\` with its \`messageId\`. Else use \`action="send"\` to \`owner:a991cc916495\`.
 - When the design is incomplete, ambiguous, or contradictory, ask with \`kind="question"\` and \`expectReply=true\`. Do not make architectural or system design decisions.
 - Do not spawn further agents unless the human or coordinator explicitly requests it.
 - Do not run \`/reload\`. It replaces your tracked bus endpoint.`);

@@ -501,7 +501,7 @@ describe("goal waits on timers", () => {
 		await settle(h);
 
 		expect(JSON.stringify(h.requests[1])).toContain("Goal continuation");
-		expect(JSON.stringify(h.requests[1])).toContain("A run ends only while a timer is armed.");
+		expect(JSON.stringify(h.requests[1])).toContain("A run that ends with no armed timer gets a continuation at once.");
 		expect(h.requests).toHaveLength(3);
 		expect(goalRecord(h)?.state).toBe("active");
 		expect(armedNames()).toEqual(["timer-1"]);

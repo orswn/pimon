@@ -57,7 +57,7 @@ describe("tool text", () => {
 
 	it("timer says what it does and how long it lives", () => {
 		expect(TIMER_DESCRIPTION).toBe(
-			'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work, and as the fallback wake while waiting on a job, monitor, or bus reply. Timers end with the pi process.',
+			'Wake this session later. action="set" arms a timer that starts or steers a run with its reason when it fires. Use it to come back to slow external work. During an active goal, also set one while waiting on a job, monitor, or bus reply. Timers end with the pi process.',
 		);
 	});
 });

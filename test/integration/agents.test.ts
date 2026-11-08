@@ -150,7 +150,7 @@ describe("agents feature", () => {
 			const rendered = sections(first);
 			expect(rendered["role"]).toBe("<role>\nYou are the worker role.\nWork carefully.\n</role>");
 			expect(rendered["delegated"]).toContain(
-				`- Your bus name is impl-w. Your coordinator is boss at \`owner:${PARENT}\`.`,
+				`- Your bus name is impl-w. Your coordinator is boss at \`owner:${PARENT.slice(0, 12)}\`.`,
 			);
 			expect(rendered["agents"]).toBeUndefined();
 			expect(first?.find((message) => message.role === "user")?.content).toEqual([
