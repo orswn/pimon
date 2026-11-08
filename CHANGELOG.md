@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-09
+
 ### Added
 
 - The statusline shows work counts after the path and git status: `A` children that are starting or running, `B` background jobs, `M` monitors, `T` armed timers. Option `statusline.workCounts`.
