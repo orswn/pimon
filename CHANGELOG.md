@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-11-09
+
 ### Fixed
 
 - vi: a double Esc pressed in normal mode reaches pi again, so it opens `/tree` (or the configured double-Escape action). Esc keys mashed right after leaving insert mode or a pending command still reach pi only once.
