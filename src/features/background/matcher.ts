@@ -25,9 +25,32 @@ export interface Matcher {
 }
 
 export function createMatcher(mode: MatchMode, source: string, ignoreCase: boolean, hooks: MatcherHooks): Matcher {
+	if (mode === "any") return new AnyMatcher(hooks);
 	return mode === "literal"
 		? new LiteralMatcher(source, ignoreCase, hooks)
 		: new RegexMatcher(source, ignoreCase, hooks);
+}
+
+class AnyMatcher implements Matcher {
+	readonly mode: MatchMode = "any";
+	private readonly hooks: MatcherHooks;
+	private disposed = false;
+
+	constructor(hooks: MatcherHooks) {
+		this.hooks = hooks;
+	}
+
+	push(line: string): void {
+		if (!this.disposed) this.hooks.onMatch(line);
+	}
+
+	stats(): MatcherStats {
+		return { dropped: 0, inflight: 0, queued: 0 };
+	}
+
+	dispose(): void {
+		this.disposed = true;
+	}
 }
 
 class LiteralMatcher implements Matcher {

@@ -64,6 +64,7 @@ This applies to pi and its extensions.
 - A `monitor` owns the command it watches. Arm it with the specific line that changes what should happen next. Broad matches are not progress tracking.
 - Background and monitor notifications report process facts. Reconcile them with the current objective before acting.
 - Use `timer` to come back later.
+- Use `background_codemode` or `monitor_codemode` for async work that needs pi or MCP tools. Use shell jobs only for shell commands.
 </background>
 
 <notify>

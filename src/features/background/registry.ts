@@ -6,8 +6,15 @@ import type { LogSink } from "./logsink.ts";
 import type { Matcher } from "./matcher.ts";
 import { LIMITS, type JobOptions, type Kind, type MonitorOptions } from "./options.ts";
 
+/** A codemode script job. It has no OS process, no pid, and no lease. */
+export interface ScriptJob {
+	code: string;
+	abort: AbortController;
+}
+
 export interface JobState {
 	options: JobOptions;
+	script?: ScriptJob | undefined;
 	sink: LogSink;
 	matcher: Matcher | undefined;
 	identity: JobIdentity | undefined;
@@ -219,6 +226,9 @@ export function describeOptions(options: JobOptions): string {
 	if (options.kind === "background") {
 		return `timeoutMs=${options.timeoutMs}; notifyExit=${options.notifyExit}`;
 	}
-	const mode = `${options.mode}${options.ignoreCase ? ", ignoreCase" : ""}`;
-	return `match=${JSON.stringify(options.matchSource)} (${mode}); streams=${[...(options.streams ?? [])].join(",")}; once=${options.once}; debounceMs=${options.debounceMs}; maxPerMinute=${options.maxPerMinute}; timeoutMs=${options.timeoutMs}`;
+	const match =
+		options.mode === "any"
+			? "every line"
+			: `${JSON.stringify(options.matchSource)} (${options.mode}${options.ignoreCase ? ", ignoreCase" : ""})`;
+	return `match=${match}; streams=${[...(options.streams ?? [])].join(",")}; once=${options.once}; debounceMs=${options.debounceMs}; maxPerMinute=${options.maxPerMinute}; timeoutMs=${options.timeoutMs}`;
 }

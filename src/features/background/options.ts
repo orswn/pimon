@@ -3,7 +3,8 @@ import * as path from "node:path";
 
 export type Kind = "monitor" | "background";
 export type StreamName = "stdout" | "stderr";
-export type MatchMode = "literal" | "regex";
+/** `any` matches every line. Only script monitors without a match use it. */
+export type MatchMode = "literal" | "regex" | "any";
 
 export interface BaseOptions {
 	kind: Kind;
@@ -119,6 +120,8 @@ export interface BuildDeps {
 	isLogFileTaken: (file: string) => string | undefined;
 	activeCount: () => number;
 	dirExists: (dir: string) => boolean;
+	/** A monitor without match matches every line instead of failing. */
+	matchAnyWithoutMatch?: boolean;
 }
 
 export function buildOptions(kind: Kind, raw: Record<string, unknown>, deps: BuildDeps): JobOptions | string {
@@ -165,12 +168,15 @@ export function buildOptions(kind: Kind, raw: Record<string, unknown>, deps: Bui
 
 	if (kind === "background") return base;
 
-	const extras = buildMonitorExtras(raw);
+	const extras = buildMonitorExtras(raw, deps.matchAnyWithoutMatch === true);
 	return typeof extras === "string" ? extras : { ...base, ...extras };
 }
 
-function buildMonitorExtras(raw: Record<string, unknown>): MonitorExtras | string {
-	const compiled = compileMatch(raw["match"], raw["ignoreCase"] === true, raw["regex"] === true);
+function buildMonitorExtras(raw: Record<string, unknown>, matchAnyWithoutMatch: boolean): MonitorExtras | string {
+	const compiled =
+		matchAnyWithoutMatch && str(raw["match"]) === ""
+			? ({ mode: "any", source: "", ignoreCase: false } as const)
+			: compileMatch(raw["match"], raw["ignoreCase"] === true, raw["regex"] === true);
 	if (typeof compiled === "string") return compiled;
 
 	const streams = parseStreams(raw["stream"] === undefined ? "stdout" : str(raw["stream"]));
@@ -210,6 +216,8 @@ export interface MonitorEdit {
 export function parseMonitorEdit(raw: Record<string, unknown>, current: MonitorOptions): MonitorEdit | string {
 	const updates: MonitorEdit = {};
 	if (raw["match"] !== undefined || raw["ignoreCase"] !== undefined || raw["regex"] !== undefined) {
+		if (current.mode === "any" && raw["match"] === undefined)
+			return `"${current.name}" matches every line. ignoreCase and regex need match; pass match too.`;
 		const source = raw["match"] === undefined ? current.matchSource : raw["match"];
 		const ignoreCase = raw["ignoreCase"] === undefined ? current.ignoreCase : raw["ignoreCase"] === true;
 		const asRegex = raw["regex"] === undefined ? current.mode === "regex" : raw["regex"] === true;

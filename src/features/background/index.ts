@@ -1,5 +1,11 @@
 import { StringEnum } from "@earendil-works/pi-ai";
-import { defineTool, type ExtensionAPI, type ExtensionContext, keyHint } from "@earendil-works/pi-coding-agent";
+import {
+	defineTool,
+	type ExtensionAPI,
+	type ExtensionContext,
+	getPackageDir,
+	keyHint,
+} from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { defineFeature, type WakeMessage } from "../../core/feature.ts";
@@ -30,6 +36,14 @@ import {
 	runtimeMs,
 } from "./registry.ts";
 import { describeStop, dirExists, editMonitor, shutdownJobs, startJob, stopJob } from "./runner.ts";
+import {
+	CODEMODE_PACKAGE,
+	createEngineCache,
+	installedVersion,
+	ownEngineVersion,
+	versionSkewWarning,
+} from "./script-engine.ts";
+import { createScriptStore, createScriptTools, SCRIPT_LIMITS, stopScriptJobs, takeStoppedNotice } from "./scripts.ts";
 import {
 	armedTimers,
 	cancelTimer,
@@ -86,10 +100,18 @@ const KIND_ACTIONS = {
 	monitor: ["start", "edit", "list", "status", "logs", "stop"],
 } as const;
 
+const configSchema = Type.Object(
+	{
+		maxScriptJobs: Type.Integer({ minimum: 1, maximum: 16, default: SCRIPT_LIMITS.defaultMaxScriptJobs }),
+	},
+	{ additionalProperties: false },
+);
+
 export const background = defineFeature({
 	id: "background",
 	description: "Background jobs that wake the agent on exit, and output monitors that wake it on a matching line",
 	defaultEnabled: true,
+	configSchema,
 	setup(ctx): BackgroundService {
 		const reg = ctx.reloadState("registry", 1, () => createRegistry(ctx.agentDir));
 		reg.agentDir = ctx.agentDir;
@@ -104,6 +126,19 @@ export const background = defineFeature({
 		ctx.pi.registerTool(createTool(reg, "background"));
 		ctx.pi.registerTool(createTool(reg, "monitor"));
 		ctx.pi.registerTool(createTimerTool(timers));
+		const scripts = ctx.reloadState("scripts", 1, createScriptStore);
+		const engine = ctx.reloadState("engine", 1, createEngineCache);
+		for (const tool of createScriptTools({
+			reg,
+			engine,
+			maxScriptJobs: ctx.config.maxScriptJobs,
+			bindSession: (extensionCtx) => bindSession(reg, extensionCtx),
+			onEngineLoad: () => {
+				const warning = versionSkewWarning(ownEngineVersion(), installedVersion(getPackageDir(), CODEMODE_PACKAGE));
+				if (warning) ctx.log.warn(warning);
+			},
+		}))
+			ctx.pi.registerTool(tool);
 		registerCommand(ctx.pi, reg, "background");
 		registerCommand(ctx.pi, reg, "monitor");
 		registerTimersCommand(ctx.pi, timers);
@@ -120,6 +155,8 @@ export const background = defineFeature({
 			};
 			const notice = sessionStartNotice(reg, event.reason);
 			if (notice) notify(notice, "info");
+			const stopped = takeStoppedNotice(scripts, extensionCtx.sessionManager.getSessionId());
+			if (stopped) notify(stopped, "info");
 			if (!reg.oldRegistryWarned) {
 				const warning = oldRegistryWarning(globalThis);
 				if (warning) {
@@ -135,6 +172,8 @@ export const background = defineFeature({
 		ctx.events.on("pimon:session-ready", () => flushTimers(timers));
 
 		ctx.onSessionShutdown(async (event) => {
+			// Before the tool context of each script goes stale.
+			await stopScriptJobs(reg, scripts, event.reason);
 			if (event.reason === "quit") clearAllTimers(timers);
 			if (timers.wake === wakeTimer) {
 				timers.wake = undefined;
@@ -448,6 +487,8 @@ function edit(reg: Registry, params: Record<string, unknown>): string {
 	const state = reg.active.get(name);
 	if (!state) return unknownActive(reg, name);
 	if (!isMonitor(state)) return `"${name}" is a background job and cannot be edited.`;
+	if (state.script && (params["timeoutMs"] !== undefined || params["stream"] !== undefined))
+		return `"${name}" is a script monitor. Its deadline and stream are fixed at start; edit cannot change timeoutMs or stream.`;
 
 	const updates = parseMonitorEdit(params, state.options);
 	if (typeof updates === "string") return updates;
@@ -469,11 +510,12 @@ function list(reg: Registry, kind: Kind): string {
 			.filter(Boolean)
 			.join(", ");
 		const other = isOtherSession(reg, state) ? " (other session)" : "";
+		const script = state.script !== undefined;
 		blocks.push(
 			[
-				`- ${state.options.name} [${state.options.kind}${flags ? ` ${flags}` : ""}]${other} pid ${state.pid ?? "?"} up ${formatDuration(runtimeMs(state))}`,
+				`- ${state.options.name} [${state.options.kind}${script ? " script" : ""}${flags ? ` ${flags}` : ""}]${other}${script ? "" : ` pid ${state.pid ?? "?"}`} up ${formatDuration(runtimeMs(state))}`,
 				`  state: ${phaseOf(state)}`,
-				`  command: ${state.options.command}`,
+				script ? `  code: ${state.options.command}` : `  command: ${state.options.command}`,
 				`  ${describeOptions(state.options)}`,
 				`  cwd: ${state.options.cwd}`,
 				`  log: ${state.sink.path}`,
@@ -501,7 +543,7 @@ function list(reg: Registry, kind: Kind): string {
 		? `No active ${kind} jobs`
 		: `No active ${kind} jobs. Recently finished: ${done
 				.slice(-5)
-				.map((state) => `${state.options.name} (${state.exitStatus})`)
+				.map((state) => `${state.options.name}${state.script ? " script" : ""} (${state.exitStatus})`)
 				.join(", ")}`;
 }
 
@@ -529,11 +571,12 @@ function status(reg: Registry, name: string): string {
 	const running = state.exitedAt === undefined;
 	const stats = state.matcher?.stats();
 	const other = isOtherSession(reg, state) ? " (other session)" : "";
+	const script = state.script !== undefined;
 	const head = [
-		`${state.options.name} [${state.options.kind}]${other} ${phaseOf(state)}`,
+		`${state.options.name} [${state.options.kind}${script ? " script" : ""}]${other} ${phaseOf(state)}`,
 		`Runtime: ${formatDuration(runtimeMs(state))}${running ? "" : " (finished)"}`,
-		`Pid: ${state.pid ?? "unknown"}`,
-		`Command: ${state.options.command}`,
+		...(script ? [] : [`Pid: ${state.pid ?? "unknown"}`]),
+		script ? `Code: ${state.options.command}` : `Command: ${state.options.command}`,
 		`Cwd: ${state.options.cwd}`,
 		describeOptions(state.options),
 		`Lines captured: ${state.totalLines}${state.droppedLines > 0 ? ` (${state.droppedLines} older line(s) only in the log file)` : ""}`,

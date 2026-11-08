@@ -39,8 +39,12 @@ export class LogSink {
 	private rotationDisabled: string | undefined;
 	private activePath: string;
 
-	constructor(file: string, maxBytes: number, ops: Partial<FileOps> = {}) {
+	private readonly fileMode: number | undefined;
+
+	/** `fileMode` applies to files this sink creates. */
+	constructor(file: string, maxBytes: number, ops: Partial<FileOps> = {}, fileMode?: number) {
 		this.file = file;
+		this.fileMode = fileMode;
 		this.activePath = file;
 		this.maxBytes = maxBytes;
 		this.ops = { ...realOps, ...ops };
@@ -49,7 +53,7 @@ export class LogSink {
 	open(header: string): void {
 		try {
 			ensureWritableDir(path.dirname(this.file), this.ops);
-			this.fd = this.ops.openSync(this.file, "a");
+			this.fd = this.ops.openSync(this.file, "a", this.fileMode);
 		} catch (error) {
 			this.fail(error);
 			return;
@@ -112,7 +116,7 @@ export class LogSink {
 
 		let newFd: number;
 		try {
-			newFd = this.ops.openSync(temp, "a");
+			newFd = this.ops.openSync(temp, "a", this.fileMode);
 		} catch (error) {
 			this.rotationDisabled = `rotation unavailable (${message(error)}); the log keeps growing past ${this.maxBytes} bytes`;
 			return;

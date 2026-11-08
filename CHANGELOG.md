@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- `background_codemode` and `monitor_codemode` tools. They run a codemode script as a background job or a monitor. Scripts call pi tools through `tools`, log lines with `emit(text)`, and wait with `sleep(ms)`. Script jobs stop at reload, session switch, and quit. At most 4 run at once; the `background` option `maxScriptJobs` changes the limit.
+
 ## [0.8.0] - 2026-11-08
 
 ### Added

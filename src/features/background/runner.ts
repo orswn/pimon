@@ -169,7 +169,7 @@ function livenessOf(identity: JobIdentity | undefined, pid: number | undefined):
 	}
 }
 
-function attachMatcher(reg: Registry, state: JobState): void {
+export function attachMatcher(reg: Registry, state: JobState): void {
 	if (!isMonitor(state)) return;
 	const options = state.options;
 	// A replaced matcher can still report a late failure. Only the current one may act.
@@ -203,7 +203,7 @@ function attach(reg: Registry, state: JobState, stream: StreamName, readable: No
 	readable.on("error", () => splitter.end());
 }
 
-function handleLine(reg: Registry, state: JobState, stream: StreamName, line: string): void {
+export function handleLine(reg: Registry, state: JobState, stream: StreamName, line: string): void {
 	appendTail(state, stream === "stderr" ? `[err] ${line}` : line);
 	if (!isMonitor(state) || !state.matcher) return;
 	if (!state.options.streams.has(stream)) return;
@@ -229,7 +229,7 @@ function onMatch(reg: Registry, state: JobState, line: string): void {
 	state.flushTimer ??= setTimeout(() => flush(reg, state), state.options.debounceMs);
 }
 
-function flush(reg: Registry, state: JobState): void {
+export function flush(reg: Registry, state: JobState): void {
 	if (state.flushTimer) clearTimeout(state.flushTimer);
 	state.flushTimer = undefined;
 	if (state.pendingTotal === 0 || !isMonitor(state)) return;
@@ -267,6 +267,7 @@ function flush(reg: Registry, state: JobState): void {
 }
 
 function patternLabel(options: MonitorOptions): string {
+	if (options.mode === "any") return "every line";
 	return `${JSON.stringify(options.matchSource)} (${options.mode})`;
 }
 
@@ -469,6 +470,18 @@ async function runStop(reg: Registry, state: JobState, reason: string, options: 
 	state.timeoutTimer = undefined;
 	state.sink.write(`\n# pi: ${options.marker ?? "stopping"} (${reason})\n`);
 
+	if (state.script) {
+		state.kill("SIGTERM");
+		const ended = await exitWithin(state, LIMITS.killGraceMs);
+		return outcome(
+			state,
+			ended ? "exited" : "unkillable",
+			ended
+				? `aborted in ${formatSeconds(Date.now() - startedAt)}`
+				: `abort requested; the script did not end within ${formatSeconds(LIMITS.killGraceMs)}`,
+		);
+	}
+
 	state.kill("SIGTERM");
 	if (await exitWithin(state, LIMITS.killGraceMs)) {
 		return outcome(state, "exited", `exited after SIGTERM in ${formatSeconds(Date.now() - startedAt)}`);
@@ -548,7 +561,7 @@ function watchUnkillable(reg: Registry, state: JobState, reason: string): void {
 	state.pollTimer.unref();
 }
 
-function emit(reg: Registry, state: JobState, text: string): void {
+export function emit(reg: Registry, state: JobState, text: string): void {
 	try {
 		reg.emit(state, text);
 	} catch {

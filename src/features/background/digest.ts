@@ -66,6 +66,29 @@ export function exitDigest(info: ExitInfo): string {
 	return lines.join("\n");
 }
 
+export const SCRIPT_EXIT_BUDGET: Budget = { maxLines: 20, maxLineChars: 500, maxTotalChars: 2_000 };
+
+export type ScriptOutcome = "ok" | "error" | "aborted" | "timeout";
+
+export interface ScriptExitInfo {
+	kind: "background" | "monitor";
+	name: string;
+	outcome: ScriptOutcome;
+	runtimeMs: number;
+	tail: readonly string[];
+	totalLines: number;
+	logFile: string;
+}
+
+export function scriptExitDigest(info: ScriptExitInfo): string {
+	const noun = info.kind === "background" ? "Background script" : "Monitor script";
+	return [
+		`${noun} "${info.name}" ended: ${info.outcome} after ${formatDuration(info.runtimeMs)}.`,
+		...renderBlock(info.tail, SCRIPT_EXIT_BUDGET, info.totalLines),
+		`Full log: ${info.logFile}`,
+	].join("\n");
+}
+
 export interface MatchInfo {
 	name: string;
 	command: string;
