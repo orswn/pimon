@@ -48,6 +48,10 @@ const isImage = (block: Block): block is Block & { data: string } =>
 const withoutData = (content: unknown) =>
 	JSON.stringify(content, (key, value: unknown) => (key === "data" ? undefined : value)) ?? "";
 
+export function hasImages(entries: readonly PlanEntry[]): boolean {
+	return entries.some((entry) => Array.isArray(entry.content) && entry.content.some(isImage));
+}
+
 function imageBytes(content: PlanEntry["content"]): number {
 	if (!Array.isArray(content)) return 0;
 	let bytes = 0;

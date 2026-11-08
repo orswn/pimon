@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Changed
+
+- A context without images no longer gets the image-budget warning that images cannot be omitted.
+
 ### Fixed
 
 - A bus socket bind error that a retry cannot fix no longer delays every prompt by 2.1 s. The bus tries again at the next session start.

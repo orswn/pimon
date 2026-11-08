@@ -1,7 +1,7 @@
 import type { ContextEditEntryDraft, ExtensionContext, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { defineFeature } from "../../core/feature.ts";
-import { type Block, type Budget, type PlanEntry, planOmissions } from "./plan.ts";
+import { type Block, type Budget, hasImages, type PlanEntry, planOmissions } from "./plan.ts";
 
 type EditableContent = NonNullable<ContextEditEntryDraft["replacement"]>["content"];
 
@@ -76,6 +76,8 @@ export const imageBudget = defineFeature({
 
 		ctx.pi.on("turn_end", (event, extensionCtx) => {
 			const projection = project(event);
+			// Only images can be omitted, so a context without one needs no size estimate.
+			if (!hasImages(projection.entries)) return undefined;
 			const plan = planOmissions(projection.entries, budget, projection);
 			if (plan.omissions.length === 0) {
 				if (plan.beforeBytes > budget.triggerBytes) warnStuck(plan.beforeBytes, extensionCtx);
