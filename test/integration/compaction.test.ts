@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { defineFeature } from "../../src/core/feature.ts";
 import { clearReloadState } from "../../src/core/reload-state.ts";
@@ -81,10 +82,38 @@ describe("compaction warning", () => {
 		await harness.session.prompt("/compaction-overrides");
 		const info = harness.notifications.filter((note) => note.level === "info").map((note) => note.message);
 		expect(info).toHaveLength(1);
-		const printed = JSON.parse(info[0] ?? "{}") as Record<string, unknown>;
+		const [head, ...json] = (info[0] ?? "").split("\n");
+		expect(head).toBe(`Add under "compaction.modelOverrides" in ${join(harness.agentDir, "settings.json")}:`);
+		const printed = JSON.parse(json.join("\n")) as Record<string, unknown>;
 		expect(printed["faux/big"]).toEqual({ reserveTokens: 744_000 });
 		expect(printed["faux/small"]).toBeUndefined();
 		expect(harness.modelRuntime.getModel("keyless", "huge")).toBeDefined();
 		expect(printed["keyless/huge"]).toBeUndefined();
+	});
+
+	it("prints the overrides with sorted keys", async () => {
+		const models = [
+			{ id: "zeta", contextWindow: 1_000_000 },
+			{ id: "alpha", contextWindow: 1_000_000 },
+		];
+		harness = await createHarness({
+			features: [compaction],
+			fauxModels: models,
+			settings: { compaction: { enabled: true, reserveTokens: 64_000 } },
+			ui: {},
+		});
+		await harness.session.prompt("/compaction-overrides");
+		const info = harness.notifications.filter((note) => note.level === "info").map((note) => note.message);
+		const json = (info[0] ?? "").split("\n").slice(1).join("\n");
+		expect(Object.keys(JSON.parse(json) as Record<string, unknown>)).toEqual(["faux/alpha", "faux/zeta"]);
+	});
+
+	it("says so when no model needs an override", async () => {
+		harness = await start({
+			compaction: { enabled: true, modelOverrides: { "faux/big": { reserveTokens: 744_000 } } },
+		});
+		await harness.session.prompt("/compaction-overrides");
+		const info = harness.notifications.filter((note) => note.level === "info").map((note) => note.message);
+		expect(info).toEqual(["No available model needs a compaction.modelOverrides entry."]);
 	});
 });

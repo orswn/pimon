@@ -8,6 +8,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - The statusline context segment shows tokens against the compaction threshold, not the model context window.
 - The `notify` result names phones by count, not by a device id.
+- `/compaction-overrides` names the settings key and file, sorts the models, and says when no model needs an override.
 
 ### Fixed
 

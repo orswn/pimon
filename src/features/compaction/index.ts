@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { defineFeature } from "../../core/feature.ts";
@@ -48,7 +49,17 @@ export const compaction = defineFeature({
 					DEFAULT_COMPACTION_SETTINGS,
 					maxThresholdTokens,
 				);
-				extensionCtx.ui.notify(JSON.stringify(overrides, null, 2), "info");
+				const keys = Object.keys(overrides).sort();
+				if (keys.length === 0) {
+					extensionCtx.ui.notify("No available model needs a compaction.modelOverrides entry.", "info");
+					return;
+				}
+				const sorted = Object.fromEntries(keys.map((key) => [key, overrides[key]]));
+				const target = join(ctx.agentDir, "settings.json");
+				extensionCtx.ui.notify(
+					`Add under "compaction.modelOverrides" in ${target}:\n${JSON.stringify(sorted, null, 2)}`,
+					"info",
+				);
 			},
 		});
 	},
