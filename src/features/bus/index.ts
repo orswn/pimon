@@ -147,6 +147,8 @@ class BusRuntime implements ActionHost {
 	private identitySent = false;
 	/** Set by a failed start. Prompts do not retry until the next session start. */
 	private startFailed = false;
+	/** The status text last sent to this session's UI. */
+	private lastStatus: string | undefined;
 	private readonly ctx: FeatureContext<{ historyRetentionDays: number }>;
 	readonly identity: Identity;
 	private readonly sessions: Map<string, SavedSession>;
@@ -219,7 +221,11 @@ class BusRuntime implements ActionHost {
 		const node = this.started;
 		if (!node || this.shuttingDown) return;
 		this.guard(() => {
-			if (this.extCtx?.hasUI) this.extCtx.ui.setStatus("pi-bus", statusText(this, node));
+			if (!this.extCtx?.hasUI) return;
+			const text = statusText(this, node);
+			if (text === this.lastStatus) return;
+			this.extCtx.ui.setStatus("pi-bus", text);
+			this.lastStatus = text;
 		});
 		this.emitIdentity(false);
 	}
@@ -241,8 +247,11 @@ class BusRuntime implements ActionHost {
 	async startSession(extCtx: ExtensionContext): Promise<void> {
 		this.identitySent = false;
 		this.startFailed = false;
+		// A new session can bring a new UI, which needs the status again.
+		this.lastStatus = undefined;
 		await this.start(extCtx);
 		if (!this.identitySent) this.emitIdentity(true);
+		this.changed();
 	}
 
 	/** A failed bind fails again at once, so a prompt tries only when no start failed since the session start. */
