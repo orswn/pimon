@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- README documents every feature, option, tool, command, environment name, and file, the git install source, and what semantic versioning covers.
+
 ### Changed
 
 - Unknown `statusline` and `vi` options are an error that turns the feature off, like the options of other features. The message names the unknown option.

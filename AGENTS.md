@@ -44,6 +44,8 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Never change tool names, descriptions, or schemas after load.
 - Live state reaches the model through tool results or custom messages, never through the system prompt.
 - Each change to prompt text or tool text updates the snapshot test in the same commit.
+- Model tokens count like CPU and memory. A change to model-visible text (prompt sections, tool descriptions and schemas, tool results, wake and notice messages) states its chars before and after in the commit body. For text that changes with input, state the chars of one typical instance and of the fixed part.
+- A change must not start more model runs or change the request prefix without a stated reason.
 
 ## Tests
 
