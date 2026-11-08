@@ -10,7 +10,7 @@ export default defineConfig({
 		useTabs: true,
 		printWidth: 120,
 		sortPackageJson: false,
-		ignorePatterns: ["CHANGELOG.md", "**/__snapshots__/**", "test/fixtures/old-bus/**"],
+		ignorePatterns: ["CHANGELOG.md", "package-lock.json", "**/__snapshots__/**", "test/fixtures/old-bus/**"],
 	},
 	lint: {
 		ignorePatterns: ["test/fixtures/old-bus/**"],
