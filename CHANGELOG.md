@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-08
+
 ### Changed
 
 - The exit of a child after `pi_agents` `close` or `kill` no longer starts a model run. The exit notice is added to the session: in the current run when one is active, otherwise before the next one. A crash after `close`, and an exit with unanswered requests, still wake the parent.
