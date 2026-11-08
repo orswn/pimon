@@ -133,6 +133,10 @@ All features are on by default. The list is in load order.
 ### `statusline`
 
 - Purpose: footer status line and working indicator.
+- The context segment shows tokens against the compaction threshold: `contextWindow - reserveTokens`, with the per-model override first.
+  - With compaction off, it shows tokens against the model context window.
+  - With a reserve at or above the window, it shows tokens only. pi then compacts at every check.
+  - A settings change shows from the next run.
 - Options:
   - `usage`: boolean, default `true`. Shows provider usage for `anthropic` and `openai-codex`. It calls their usage endpoints.
   - `usagePollSeconds`: integer, default `60`, from `30` to `3600`.

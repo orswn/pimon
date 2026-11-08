@@ -1,7 +1,8 @@
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createProcessRunner, type ExecFn } from "../../core/exec.ts";
 import { defineFeature } from "../../core/feature.ts";
+import { type CompactionSettingsInput, compactionThreshold, type ModelWindow } from "../compaction/threshold.ts";
 import { createGitWatch } from "./git.ts";
 import {
 	type BusIdentity,
@@ -66,6 +67,19 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				now,
 				onChange: () => renderNow?.(),
 			});
+			// pi.getSettings() clones every setting, so the limit is read once per model and run, not per render.
+			let cachedLimit: { key: string; limit: number } | undefined;
+			const contextLimit = (model: ModelWindow | undefined): number => {
+				if (!model?.contextWindow) return 0;
+				const key = `${model.provider}/${model.id}/${model.contextWindow}`;
+				if (cachedLimit?.key === key) return cachedLimit.limit;
+				const settings = pi.getSettings().compaction as CompactionSettingsInput | undefined;
+				const info = compactionThreshold(model, settings, DEFAULT_COMPACTION_SETTINGS);
+				// A reserve that leaves no room makes pi compact at every check, so no limit is shown.
+				const limit = !info.enabled ? model.contextWindow : info.threshold > 0 ? info.threshold : 0;
+				cachedLimit = { key, limit };
+				return limit;
+			};
 			const requestGit = (cwd: string) => {
 				// Only a built footer shows git. RPC mode has a UI but ignores custom footers.
 				if (config.gitStatus && renderNow) git.request(cwd);
@@ -97,11 +111,11 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 
 				const { totals, context } = stats.get(ext);
 				const contextTokens = context?.tokens ?? 0;
-				const contextWindow = model?.contextWindow ?? 0;
-				const pct = contextWindow ? Math.round((contextTokens / contextWindow) * 100) : 0;
+				const limit = contextLimit(model);
+				const pct = limit ? Math.round((contextTokens / limit) * 100) : 0;
 				const contextPart = theme.fg(
 					usageColor(pct),
-					contextWindow ? `${fmt(contextTokens)}/${fmt(contextWindow)} (${pct}%)` : fmt(contextTokens),
+					limit ? `${fmt(contextTokens)}/${fmt(limit)} (${pct}%)` : fmt(contextTokens),
 				);
 
 				const status =
@@ -178,6 +192,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 			};
 
 			ctx.onSessionStart((_event, ext) => {
+				cachedLimit = undefined;
 				// Bus and goal are not cleared: both start first and always publish at session start, `{}` when empty.
 				aborter = new AbortController();
 				usage = config.usage
@@ -195,6 +210,10 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				requestGit(ext.cwd);
 			});
 
+			// Settings can change between runs.
+			pi.on("agent_start", () => {
+				cachedLimit = undefined;
+			});
 			pi.on("turn_end", (_event, ext) => {
 				requestGit(ext.cwd);
 				renderNow?.();

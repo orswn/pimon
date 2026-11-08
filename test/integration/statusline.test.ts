@@ -60,6 +60,7 @@ interface StartOptions extends StatuslineFeatureOptions {
 	before?: AnyFeature[];
 	/** A host with a UI that ignores custom footers, like RPC mode. */
 	dropFooter?: boolean;
+	settings?: Parameters<typeof createHarness>[0]["settings"];
 }
 
 function gitRecorder(stdout = "## feature...origin/feature [ahead 1]\n M a.ts\n") {
@@ -104,6 +105,7 @@ async function start(options: StartOptions = {}) {
 			eventsProbe,
 			createStatuslineFeature({ exec: gitRecorder().exec, fetch: usageFetch().fetch, ...options, cacheDir }),
 		],
+		...(options.settings ? { settings: options.settings } : {}),
 		setupAgentDir: (dir) => {
 			if (options.config || options.features) {
 				const features = { ...options.features, ...(options.config ? { statusline: options.config } : {}) };
@@ -303,6 +305,38 @@ describe("statusline footer", () => {
 		expect(line).toMatch(/faux - .+ - off/);
 		expect(line).toContain("0/");
 		expect(line).toHaveLength(200);
+	});
+
+	it("measures context against the compaction threshold", async () => {
+		const s = await start({ settings: { compaction: { enabled: true, reserveTokens: 28_000 } } });
+		expect(s.line()).toContain("0/100k (0%)");
+	});
+
+	it("uses the per-model compaction reserve first", async () => {
+		const s = await start();
+		const model = s.h.session.model;
+		if (!model) throw new Error("no model");
+		const key = `${model.provider}/${model.id}`;
+		s.h.session.settingsManager.applyOverrides({
+			compaction: { enabled: true, reserveTokens: 28_000, modelOverrides: { [key]: { reserveTokens: 64_000 } } },
+		});
+		await runTurn(s.h);
+		expect(s.line()).toMatch(/\/64k \(\d+%\)/);
+	});
+
+	it("measures context against the model window when compaction is off, from the next run", async () => {
+		const s = await start({ settings: { compaction: { enabled: true, reserveTokens: 28_000 } } });
+		expect(s.line()).toContain("/100k (");
+		s.h.session.settingsManager.setCompactionEnabled(false);
+		await runTurn(s.h);
+		expect(s.line()).toMatch(/\/128k \(\d+%\)/);
+	});
+
+	it("shows tokens only when the compaction reserve leaves no room", async () => {
+		const s = await start({ settings: { compaction: { enabled: true, reserveTokens: 128_000 } } });
+		const line = s.line();
+		expect(line).toMatch(/│ 0$/);
+		expect(line).not.toContain("/128k");
 	});
 
 	it("shows only the footer branch when git status is off, and runs no git", async () => {
