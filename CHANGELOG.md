@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-09
+
 ### Changed
 
 - The statusline context segment shows tokens against the compaction threshold, not the model context window.
