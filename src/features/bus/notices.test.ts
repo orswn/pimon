@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { MAX_STATE_CHARS, MAX_STATE_ITEMS, renderOpenState } from "./digest.ts";
 import type { PeerGone } from "./node.ts";
-import { type PeerGoneContext, peerGoneWakes } from "./notices.ts";
+import { type PeerGoneContext, peerGoneWakes, ExpectedExits } from "./notices.ts";
 import type { Envelope, PeerRecord, PendingQuestion } from "./protocol.ts";
 
 const SELF_OWNER = "a".repeat(32);
@@ -88,5 +88,52 @@ describe("open state after compaction", () => {
 		expect(text.length).toBeLessThanOrEqual(MAX_STATE_CHARS);
 		expect(text.split("\n").filter((line) => line.startsWith("- Pending")).length).toBeLessThanOrEqual(MAX_STATE_ITEMS);
 		expect(text).toMatch(/- \d+ more\. Use pi_bus/);
+	});
+});
+
+describe("expected exits", () => {
+	const MIN = 60_000;
+
+	it("matches the next exit of a marked owner once", () => {
+		const exits = new ExpectedExits();
+		exits.expect("o1", undefined, 0);
+		expect(exits.take("o2", "exited", 1)).toBe(false);
+		expect(exits.take("o1", "exited", 1)).toBe(true);
+		expect(exits.take("o1", "exited", 2)).toBe(false);
+	});
+
+	it("matches only the marked reasons and drops the mark on any exit", () => {
+		const exits = new ExpectedExits();
+		exits.expect("o1", ["left"], 0);
+		expect(exits.take("o1", "exited", 1)).toBe(false);
+		expect(exits.take("o1", "left", 2)).toBe(false);
+		exits.expect("o1", ["left"], 0);
+		expect(exits.take("o1", "left", 1)).toBe(true);
+	});
+
+	it("drops a mark after 10 minutes", () => {
+		const exits = new ExpectedExits();
+		exits.expect("o1", undefined, 0);
+		expect(exits.take("o1", "left", 10 * MIN + 1)).toBe(false);
+		exits.expect("o1", undefined, 0);
+		expect(exits.take("o1", "left", 10 * MIN - 1)).toBe(true);
+	});
+
+	it("drops a mark that is cleared or cancelled", () => {
+		const exits = new ExpectedExits();
+		exits.expect("o1", undefined, 0);
+		exits.clear("o1");
+		expect(exits.take("o1", "left", 1)).toBe(false);
+		const cancel = exits.expect("o1", undefined, 0);
+		cancel();
+		expect(exits.take("o1", "left", 1)).toBe(false);
+	});
+
+	it("keeps a newer mark when an older one is cancelled, also in the same millisecond", () => {
+		const exits = new ExpectedExits();
+		const cancelOld = exits.expect("o1", undefined, 5);
+		exits.expect("o1", undefined, 5);
+		cancelOld();
+		expect(exits.take("o1", "left", 6)).toBe(true);
 	});
 });

@@ -17,7 +17,7 @@ import {
 	wakePolicyOf,
 } from "./identity.ts";
 import { BusNode, type PeerGone, type SendInit } from "./node.ts";
-import { lapseNotice, peerGoneNotice, peerGoneWakes } from "./notices.ts";
+import { ExpectedExits, lapseNotice, peerGoneNotice, peerGoneWakes } from "./notices.ts";
 import type { Envelope, PeerRecord, PendingQuestion, ProbeResult, SendResult } from "./protocol.ts";
 import { BUS_PROMPT } from "./prompt.ts";
 import type { QueuedDigest } from "./queue.ts";
@@ -50,6 +50,11 @@ export interface BusService {
 	resolve(selector: string): PeerRecord[];
 	watch(peer: PeerRecord | string): boolean;
 	unwatch(instanceId: string): void;
+	/**
+	 * The next exit notice of this watched owner for one of `reasons` starts no run. No `reasons` means any.
+	 * The notice still wakes when the peer owed answers. Returns a cancel.
+	 */
+	expectExit(owner: string, reasons?: readonly PeerGone["reason"][]): () => void;
 	probe(selector: string): Promise<ProbeResult[]>;
 	send(to: string, init: SendInit): Promise<SendResult>;
 	sendTo(peer: PeerRecord, init: SendInit): Promise<SendResult>;
@@ -430,10 +435,20 @@ class BusRuntime implements ActionHost {
 		this.queueForDigest(undefined, `Unknown control request "${action}" from ${envelope.from.name}.`);
 	}
 
+	readonly expectedExits = new ExpectedExits();
+
+	unwatch(instanceId: string): void {
+		const node = this.node();
+		const watched = node.watching().find((peer) => peer.instanceId === instanceId);
+		if (watched?.owner) this.expectedExits.clear(watched.owner);
+		node.unwatch(instanceId);
+	}
+
 	private onPeerGone(event: PeerGone): void {
 		this.ctx.events.emit("bus:peer-gone", event);
 		const node = this.current;
 		const notice = peerGoneNotice(event);
+		const expected = event.record.owner ? this.expectedExits.take(event.record.owner, event.reason) : false;
 		const wakes =
 			node !== undefined &&
 			peerGoneWakes(event, {
@@ -443,9 +458,21 @@ class BusRuntime implements ActionHost {
 				policy: this.wakePolicy,
 				unansweredInbound: this.currentStore.unansweredInbound(),
 			});
-		if (wakes) this.queueForDigest(undefined, notice);
+		if (wakes && expected && event.pending.length === 0) this.addWithoutWake(notice);
+		else if (wakes) this.queueForDigest(undefined, notice);
 		else this.notify(`bus: ${notice}`, "info");
 		this.changed();
+	}
+
+	/** Stored now when idle, or after the current turn of a run. */
+	private addWithoutWake(notice: string): void {
+		this.notify(`bus: ${notice}`, "info");
+		this.guard(() =>
+			this.ctx.pi.sendMessage(
+				{ customType: DIGEST_TYPE, content: notice, display: true, details: { wake: "never", notices: 1 } },
+				{ triggerTurn: false },
+			),
+		);
 	}
 
 	private onPendingOverdue(pending: PendingQuestion[]): void {
@@ -555,7 +582,8 @@ function createService(runtime: BusRuntime): BusService {
 		},
 		resolve: (selector) => runtime.node().resolve(selector),
 		watch: (peer) => runtime.node().watch(peer),
-		unwatch: (instanceId) => runtime.node().unwatch(instanceId),
+		unwatch: (instanceId) => runtime.unwatch(instanceId),
+		expectExit: (owner, reasons) => runtime.expectedExits.expect(owner, reasons),
 		probe: (selector) => runtime.node().probe(selector),
 		send: (to, init) => runtime.node().send(to, init),
 		sendTo: (peer, init) => runtime.node().sendTo(peer, init),

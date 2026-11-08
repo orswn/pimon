@@ -129,6 +129,10 @@ function setup(root: string, options: Options = {}): Harness {
 			events.push(`control ${peer.instanceId}`);
 			return { delivered: [peer], unknown: [], failed: [], matched: [peer], acks: [] } as unknown as SendResult;
 		},
+		expectExit: (owner: string, reasons?: string[]) => {
+			events.push(`expect ${owner}${reasons ? ` ${reasons.join(",")}` : ""}`);
+			return () => events.push(`cancel ${owner}`);
+		},
 		onPeerGone: () => () => {},
 		onReady: () => () => {},
 		setSpawnIdentity: () => {},
@@ -422,6 +426,82 @@ describe("child lifecycle", () => {
 		expect(h.records.mine(OWNER)).toHaveLength(1);
 	});
 
+	it("expects the exit of a child that took the close request", async () => {
+		const h = setup(root);
+		await spawn(h);
+		const peer = h.peers[0] as PeerRecord;
+		h.events.length = 0;
+		await closeAction(h.host, undefined);
+		expect(h.events).toEqual([`expect ${peer.owner} left`, `control ${peer.instanceId}`]);
+	});
+
+	it("drops the expectation when the close request throws", async () => {
+		const h = setup(root);
+		await spawn(h);
+		const peer = h.peers[0] as PeerRecord;
+		h.host.bus.sendTo = async () => {
+			throw new Error("no live peer matches");
+		};
+		h.events.length = 0;
+		await expect(closeAction(h.host, undefined)).rejects.toThrow("no live peer matches");
+		expect(h.events).toEqual([`expect ${peer.owner} left`, `cancel ${peer.owner}`]);
+	});
+
+	it("drops the expectation when the close request is not delivered", async () => {
+		const h = setup(root);
+		await spawn(h);
+		const peer = h.peers[0] as PeerRecord;
+		h.host.bus.sendTo = async () =>
+			({
+				delivered: [],
+				unknown: [],
+				failed: [{ ...peer, reason: "refused" }],
+				matched: [peer],
+				acks: [],
+			}) as unknown as SendResult;
+		h.events.length = 0;
+		const result = await closeAction(h.host, undefined);
+		expect(result.ok).toBe(false);
+		expect(h.events).toEqual([`expect ${peer.owner} left`, `cancel ${peer.owner}`]);
+	});
+
+	it.skipIf(process.getuid?.() === 0)("drops the expectation when the killed process survives", async () => {
+		const h = setup(root);
+		await spawn(h);
+		const peer = h.peers[0] as PeerRecord;
+		// pid 1 belongs to another user, so the signals fail and the process stays alive.
+		h.peers.splice(0, 1, { ...peer, pid: 1, pidBirth: pidBirth(1) });
+		storedRecord(h, { spawnId: String(peer.labels["spawn"]), instanceId: peer.instanceId, pidBirth: pidBirth(1) });
+		h.events.length = 0;
+		const result = await killAction(h.host, undefined, false);
+		expect(result.text).toContain("survived SIGTERM and SIGKILL");
+		expect(h.events.filter((event) => event.startsWith("expect") || event.startsWith("cancel"))).toEqual([
+			`expect ${peer.owner}`,
+			`cancel ${peer.owner}`,
+		]);
+	});
+
+	it("expects the exit of a killed child and not of a child with an unknown process state", async () => {
+		const h = setup(root);
+		await spawn(h);
+		const peer = h.peers[0] as PeerRecord;
+		h.peers.splice(0, 1, { ...peer, pid: DEAD_PID });
+		h.events.length = 0;
+		expect((await killAction(h.host, undefined, false)).ok).toBe(true);
+		expect(h.events.filter((event) => event.startsWith("expect") || event.startsWith("cancel"))).toEqual([
+			`expect ${peer.owner}`,
+		]);
+
+		const other = setup(join(root, "other"));
+		storedRecord(other, { spawnId: String(peer.labels["spawn"]), instanceId: peer.instanceId });
+		other.peers.push({ ...peer, pid: undefined } as unknown as PeerRecord);
+		await killAction(other.host, "worker", false);
+		expect(other.events.filter((event) => event.startsWith("expect") || event.startsWith("cancel"))).toEqual([
+			`expect ${peer.owner}`,
+			`cancel ${peer.owner}`,
+		]);
+	});
+
 	it("sends the control token when it closes a live child", async () => {
 		const h = setup(root);
 		await spawn(h);
@@ -463,7 +543,7 @@ describe("child lifecycle", () => {
 			expect(result.ok).toBe(false);
 			expect(result.text).toContain("its endpoint changed after a child reload");
 		}
-		expect(h.events.filter((event) => event.startsWith("control") || event.startsWith("close"))).toEqual([]);
+		expect(h.events.filter((event) => /^(control|close|expect)/.test(event))).toEqual([]);
 		expect(h.records.mine(OWNER)).toHaveLength(1);
 	});
 

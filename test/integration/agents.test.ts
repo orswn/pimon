@@ -330,5 +330,40 @@ describe("agents feature", () => {
 			await until(() => h.uiNotices.some((notice) => notice.includes("(worker)")));
 			expect(h.uiNotices.at(-1)).toContain("status: idle");
 		});
+
+		it("starts no run when a closed child exits and shows the exit at the next turn", async () => {
+			let agentDir = "";
+			const h = await start({
+				placer: childPlacer(() => agentDir),
+				setupAgentDir: (dir) => {
+					agentDir = dir;
+					mkdirSync(join(dir, "agents"));
+					writeFileSync(join(dir, "agents", "worker.md"), "---\nname: worker\n---\nYou work.\n");
+				},
+				ui: {},
+			});
+			h.respond([
+				fauxAssistantMessage(fauxToolCall("pi_agents", { action: "spawn", role: "worker", task: "go" }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage(fauxText("spawned")),
+				fauxAssistantMessage(fauxToolCall("pi_agents", { action: "close" }), { stopReason: "toolUse" }),
+				fauxAssistantMessage(fauxText("closing")),
+			]);
+			await h.session.prompt("spawn one");
+			await h.session.prompt("close it");
+			expect(JSON.stringify(h.session.messages.at(-2))).toContain("finish and exit");
+			const requests = h.requests.length;
+
+			const child = nodes.at(-1) as BusNode;
+			await child.stop({ announce: true });
+			await until(() => h.notifications.some((entry) => entry.message.includes("stopped its bus endpoint")));
+			await new Promise((resolve) => setTimeout(resolve, 1_800));
+			expect(h.requests).toHaveLength(requests);
+
+			h.respond([fauxAssistantMessage(fauxText("ok"))]);
+			await h.session.prompt("next");
+			expect(JSON.stringify(h.requests.at(-1))).toContain("stopped its bus endpoint. Its process may still run.");
+		});
 	});
 });

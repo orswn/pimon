@@ -224,6 +224,72 @@ describe("bus feature", () => {
 		expect(String(customMessages(h, DIGEST_TYPE)[0]?.content)).toContain("child");
 	});
 
+	it("starts no run for an expected child exit and shows the notice at the next turn", async () => {
+		const h = await start({ ui: {} });
+		const child = await startPeer("child", { parent: busService().owner });
+		busService().watch(child.record);
+		busService().expectExit(child.owner);
+		await child.stop({ announce: true });
+		peers.splice(peers.indexOf(child), 1);
+		await until(() => h.notifications.some((entry) => entry.message.includes("stopped its bus endpoint")));
+		await new Promise((resolve) => setTimeout(resolve, 1_800));
+		expect(h.requests).toHaveLength(0);
+
+		h.respond([fauxAssistantMessage(fauxText("ok"))]);
+		await h.session.prompt("next");
+		const seen = JSON.stringify(h.requests[0]);
+		expect(seen).toContain("child (owner:");
+		expect(seen).toContain("stopped its bus endpoint. Its process may still run.");
+	});
+
+	it("adds an expected exit to the current run without an extra run", async () => {
+		const h = await start({ ui: {} });
+		const child = await startPeer("child", { parent: busService().owner });
+		busService().watch(child.record);
+		busService().expectExit(child.owner);
+		h.respond([
+			async () => {
+				await child.stop({ announce: true });
+				peers.splice(peers.indexOf(child), 1);
+				await until(() => h.notifications.some((entry) => entry.message.includes("stopped its bus endpoint")));
+				return fauxAssistantMessage(fauxToolCall("pi_bus", { action: "whoami" }), { stopReason: "toolUse" });
+			},
+			fauxAssistantMessage(fauxText("seen")),
+		]);
+		await h.session.prompt("close it");
+		expect(h.requests).toHaveLength(2);
+		expect(JSON.stringify(h.requests[1])).toContain("stopped its bus endpoint. Its process may still run.");
+		await new Promise((resolve) => setTimeout(resolve, 1_800));
+		expect(h.requests).toHaveLength(2);
+	});
+
+	it("wakes for an expected exit of a child that owes an answer", async () => {
+		const h = await start();
+		const child = await startPeer("child", { parent: busService().owner });
+		busService().watch(child.record);
+		await busService().send(`id:${child.instanceId}`, { body: "status?", kind: "question", replyExpected: true });
+		busService().expectExit(child.owner);
+		h.respond([fauxAssistantMessage(fauxText("noted"))]);
+		await child.stop({ announce: true });
+		peers.splice(peers.indexOf(child), 1);
+		await h.waitForRequests(1);
+		expect(String(customMessages(h, DIGEST_TYPE)[0]?.content)).toContain("1 unanswered request(s)");
+	});
+
+	it("wakes for a child exit after its expectation was cleared by an unwatch", async () => {
+		const h = await start();
+		const child = await startPeer("child", { parent: busService().owner });
+		busService().watch(child.record);
+		busService().expectExit(child.owner);
+		busService().unwatch(child.instanceId);
+		busService().watch(child.record);
+		h.respond([fauxAssistantMessage(fauxText("noted"))]);
+		await child.stop({ announce: true });
+		peers.splice(peers.indexOf(child), 1);
+		await h.waitForRequests(1);
+		expect(String(customMessages(h, DIGEST_TYPE)[0]?.content)).toContain("child");
+	});
+
 	it("restores open bus state after compaction without starting a run", async () => {
 		const h = await start({ settings: { compaction: { enabled: false, keepRecentTokens: 1 } } });
 		const peer = await startPeer("asker");

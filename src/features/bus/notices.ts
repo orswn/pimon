@@ -45,3 +45,36 @@ export function peerGoneWakes(event: PeerGone, context: PeerGoneContext): boolea
 	}
 	return true;
 }
+
+const EXPECTED_EXIT_MS = 10 * 60_000;
+
+interface ExitMark {
+	at: number;
+	reasons: readonly PeerGone["reason"][] | undefined;
+}
+
+/** Owners whose next exit notice was asked for, so it must not start a run. */
+export class ExpectedExits {
+	private readonly marks = new Map<string, ExitMark>();
+
+	/** No `reasons` matches any reason. Returns a cancel that drops only this mark. */
+	expect(owner: string, reasons?: readonly PeerGone["reason"][], now = Date.now()): () => void {
+		const mark: ExitMark = { at: now, reasons };
+		this.marks.set(owner, mark);
+		return () => {
+			if (this.marks.get(owner) === mark) this.marks.delete(owner);
+		};
+	}
+
+	/** Any exit uses up the mark. Only a marked reason inside the window matches. */
+	take(owner: string, reason: PeerGone["reason"], now = Date.now()): boolean {
+		const mark = this.marks.get(owner);
+		this.marks.delete(owner);
+		if (!mark || now - mark.at > EXPECTED_EXIT_MS) return false;
+		return !mark.reasons || mark.reasons.includes(reason);
+	}
+
+	clear(owner: string): void {
+		this.marks.delete(owner);
+	}
+}

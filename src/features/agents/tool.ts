@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import type { BusService } from "../bus/index.ts";
 import type { PeerGone } from "../bus/node.ts";
+import type { SendResult } from "../bus/protocol.ts";
 import type { PeerRecord } from "../bus/protocol.ts";
 import { shortId } from "../bus/protocol.ts";
 import { pidAlive, pidBirth } from "../bus/registry.ts";
@@ -754,15 +755,24 @@ export async function closeAction(host: AgentsHost, agent: string | undefined): 
 			ok: gone,
 		};
 	}
-	const result = await bus.sendTo(peer, {
-		body: "shutdown",
-		subject: "shutdown",
-		kind: "control",
-		wake: "now",
-		priority: "urgent",
-		data: { token: record.controlToken },
-	});
+	// Marked first: an idle child can stop before the delivery result returns. A crash still wakes.
+	const cancelExpectation = bus.expectExit(peer.owner, ["left"]);
+	let result: SendResult;
+	try {
+		result = await bus.sendTo(peer, {
+			body: "shutdown",
+			subject: "shutdown",
+			kind: "control",
+			wake: "now",
+			priority: "urgent",
+			data: { token: record.controlToken },
+		});
+	} catch (error) {
+		cancelExpectation();
+		throw error;
+	}
 	const accepted = result.delivered.length > 0;
+	if (!accepted) cancelExpectation();
 	return {
 		text: accepted
 			? `Asked ${record.name} to finish and exit. It shuts down once it is idle, so a final report may still arrive. Use action="kill" if it does not stop.`
@@ -816,7 +826,10 @@ export async function killAction(
 	const changed = endpointChangedPeer(host, record);
 	if (changed) return endpointChanged(record, "killed", changed);
 	const peer = peerFor(host, record);
+	// Marked first: SIGTERM makes the child stop its endpoint during the grace wait.
+	const cancelExpectation = peer ? host.bus.expectExit(peer.owner) : undefined;
 	const { state, notes } = await stopChild(host, record, peer);
+	if (state !== "dead") cancelExpectation?.();
 	let paneClosed = false;
 	if (force !== false) {
 		if (record.placement.kind !== "herdr") notes.push(`its ${record.placement.kind} pane is not managed`);
