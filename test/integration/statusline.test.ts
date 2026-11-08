@@ -151,12 +151,18 @@ async function start(options: StartOptions = {}) {
 	};
 	const line = (width = 200) => strip((component ?? mount()).render(width).join("\n"));
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
-	/** Renders once and waits for the re-render that a finished usage check requests. */
+	const usageDone = () => {
+		if (!existsSync(cacheDir)) return false;
+		const names = readdirSync(cacheDir);
+		return names.some((name) => name.endsWith(".json")) && !names.some((name) => name.endsWith(".claim"));
+	};
+	/** Renders once and waits until the usage check wrote its cache, released its claim, and asked for a render. */
 	const checked = async () => {
 		const before = renders;
 		line();
 		const deadline = Date.now() + 5_000;
-		while (renders === before) {
+		// A git status result also asks for a render, so a render alone does not mean the usage check ended.
+		while (renders === before || !usageDone()) {
 			if (Date.now() > deadline) throw new Error("no re-render after the usage check");
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		}
