@@ -69,6 +69,13 @@ describe("digest text", () => {
 		expect(byBytes.omitted.length).toBeGreaterThan(0);
 	});
 
+	it("keeps a 2000-byte body whole", () => {
+		const body = "z".repeat(2_000);
+		const { text } = renderDigest(store, { envelopes: [envelope(1, body)], notices: [] });
+		expect(text).toContain(body);
+		expect(text).not.toContain("[truncated;");
+	});
+
 	it("cuts a long body and points to the read action", () => {
 		const { text } = renderDigest(store, { envelopes: [envelope(1, "y".repeat(5_000))], notices: [] });
 		expect(text).toContain('[truncated; read it with action="read"]');

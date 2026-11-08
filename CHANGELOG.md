@@ -7,6 +7,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 ### Changed
 
 - Peer presence files are written when the run state changes, not on each tool call. `pi_bus peers` shows the current tool within 5 s.
+- Bus digests show message bodies up to 4000 bytes before they cut them. The limit was 1200 bytes.
 
 ## [0.11.0] - 2026-11-08
 
