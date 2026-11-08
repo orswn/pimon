@@ -345,7 +345,12 @@ describe("script jobs", () => {
 		const all = wakes(h, "monitor");
 		expect(all).toHaveLength(1);
 		expect(all[0]).toContain("hit 1");
-		expect(findJob(registry(), "first")?.exitStatus).toBe("aborted");
+		const state = findJob(registry(), "first");
+		expect(state?.exitStatus).toBe("stopped (matched once)");
+		const log = readFileSync(state?.sink.path ?? "", "utf8");
+		expect(log).toContain("# pi: stopping (matched once)");
+		expect(log).toContain("Script stopped (matched once)");
+		expect(log).not.toContain("aborted");
 	});
 
 	it("aborts running script jobs at reload, keeps them listed, wakes no model, and says so once", async () => {

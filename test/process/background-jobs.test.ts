@@ -305,6 +305,11 @@ describe("monitor matching", () => {
 		const state = start(options);
 		expect(await waitFor(() => state.exitedAt !== undefined, 6_000)).toBe(true);
 		expect(emitsFor(options.name).filter((text) => text.includes("ended"))).toHaveLength(0);
+		expect(state.exitStatus).toBe("stopped (matched once)");
+		const status = await runAction(reg, "monitor", { action: "status", name: options.name }, root);
+		if (typeof status !== "string") throw new Error("expected status text");
+		expect(status.split("\n")[0]).toMatch(/\] (\(other session\) )?stopped \(matched once\)$/);
+		expect(readFileSync(options.logFile, "utf8")).toContain("# pi: stopping (matched once)");
 	});
 });
 

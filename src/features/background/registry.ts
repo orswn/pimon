@@ -48,6 +48,8 @@ export interface JobState {
 	unkillable: boolean;
 	exitedAt: number | undefined;
 	exitStatus: string | undefined;
+	/** Set by a stop that ends the job normally. It replaces the signal or abort status. */
+	stopStatus: string | undefined;
 	exited: Promise<void>;
 	markExited: () => void;
 	/** Set while a start call waits inline. It takes the exit digest instead of a wake. */

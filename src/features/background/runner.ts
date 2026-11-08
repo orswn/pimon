@@ -81,6 +81,7 @@ export function startJob(reg: Registry, options: JobOptions, sessionId?: string)
 		unkillable: false,
 		exitedAt: undefined,
 		exitStatus: undefined,
+		stopStatus: undefined,
 		exited,
 		markExited,
 		kill: (signal) => signalGroup(pid, proc, signal),
@@ -263,7 +264,7 @@ export function flush(reg: Registry, state: JobState): void {
 			logFile: state.sink.path,
 		}),
 	);
-	if (options.once) void stopJob(reg, state, "matched once", { reportUnkillable: true });
+	if (options.once) void stopJob(reg, state, "matched once", { reportUnkillable: true, normal: true });
 }
 
 function patternLabel(options: MonitorOptions): string {
@@ -381,7 +382,7 @@ export function editMonitor(reg: Registry, state: JobState, updates: MonitorEdit
 
 function finish(reg: Registry, state: JobState, status: string): void {
 	const stats = state.matcher?.stats();
-	if (!retireJob(reg, state, status)) return;
+	if (!retireJob(reg, state, state.stopStatus ?? status)) return;
 	deleteLease(state.leaseFile);
 	state.leaseFile = undefined;
 	if (state.stopping || !state.options.notifyExit) return;
@@ -454,6 +455,8 @@ interface StopOptions {
 	watch?: boolean;
 	/** A stop the agent did not ask for has no tool result, so a survivor is reported by a wake. */
 	reportUnkillable?: boolean;
+	/** The job did its work. Its status is `stopped (<reason>)`, not the signal or abort. */
+	normal?: boolean;
 }
 
 export function describeStop(result: StopOutcome, logFile: string): string {
@@ -482,6 +485,7 @@ export function stopJob(
 async function runStop(reg: Registry, state: JobState, reason: string, options: StopOptions): Promise<StopOutcome> {
 	const startedAt = Date.now();
 	state.stopping = true;
+	if (options.normal) state.stopStatus = `stopped (${reason})`;
 	if (state.flushTimer) clearTimeout(state.flushTimer);
 	if (state.timeoutTimer) clearTimeout(state.timeoutTimer);
 	state.flushTimer = undefined;

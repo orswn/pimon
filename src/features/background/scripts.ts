@@ -276,6 +276,7 @@ function createScriptState(reg: Registry, options: JobOptions, code: string, abo
 		unkillable: false,
 		exitedAt: undefined,
 		exitStatus: undefined,
+		stopStatus: undefined,
 		exited,
 		markExited,
 		kill: () => abort.abort(new Error("Script job stopped")),
@@ -332,7 +333,10 @@ function finishScript(reg: Registry, state: JobState, result: CodemodeResult): v
 		state.sink.write(`${line}\n`);
 		appendTail(state, line);
 	}
-	const errorLine = scriptErrorLine(result);
+	const outcome = outcomeOf(result);
+	// A normal stop arrives as an abort. Any other outcome is a real result and stays visible.
+	const stopStatus = outcome === "aborted" ? state.stopStatus : undefined;
+	const errorLine = stopStatus ? `Script ${stopStatus}` : scriptErrorLine(result);
 	if (errorLine !== undefined) {
 		state.sink.write(`${errorLine}\n`);
 		appendTail(state, clampText(errorLine.replace(/\r?\n/g, "\\n"), SCRIPT_EXIT_BUDGET.maxLineChars));
@@ -343,8 +347,7 @@ function finishScript(reg: Registry, state: JobState, result: CodemodeResult): v
 	} else {
 		flush(reg, state);
 	}
-	const outcome = outcomeOf(result);
-	if (!retireJob(reg, state, outcome)) return;
+	if (!retireJob(reg, state, stopStatus ?? outcome)) return;
 	if (state.stopping) return;
 	if (!state.options.notifyExit && outcome !== "timeout") return;
 	emit(
