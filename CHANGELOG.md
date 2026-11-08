@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- In fullscreen mode, a left click on a footer count shows its list: `A` shows `/agents`, `B` shows `/background list`, `M` shows `/monitor list`, and `T` shows `/timers`.
+
 ## [1.5.2] - 2026-11-09
 
 ### Fixed

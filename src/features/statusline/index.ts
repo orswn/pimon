@@ -1,4 +1,5 @@
 import { DEFAULT_COMPACTION_SETTINGS, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { TuiMouseEvent } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createProcessRunner, type ExecFn } from "../../core/exec.ts";
 import { defineFeature } from "../../core/feature.ts";
@@ -7,13 +8,16 @@ import { createGitWatch } from "./git.ts";
 import {
 	type BusIdentity,
 	busSegment,
+	clickedCount,
 	compactPath,
-	countsSegment,
+	type CountKind,
+	type CountRegion,
 	fmt,
+	type FooterLayout,
 	type GoalIndicator,
 	gitSegment,
 	goalSegment,
-	layoutLine,
+	layoutFooter,
 	type ThemeLike,
 	usageColor,
 	type WorkCounts,
@@ -27,6 +31,13 @@ import {
 	type UsagePart,
 	type UsagePoller,
 } from "./usage.ts";
+
+declare module "../../core/events.ts" {
+	interface PimonEvents {
+		/** A click on a footer count. The feature that owns the count shows the text of its list command. */
+		"statusline:list": { kind: CountKind; show: (text: string, level: "info" | "warning" | "error") => void };
+	}
+}
 
 const configSchema = Type.Object(
 	{
@@ -115,7 +126,12 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 				});
 			}
 
-			const renderLine = (ext: ExtensionContext, theme: ThemeLike, gitBranch: string | null, width: number): string => {
+			const renderLine = (
+				ext: ExtensionContext,
+				theme: ThemeLike,
+				gitBranch: string | null,
+				width: number,
+			): FooterLayout => {
 				const time = now();
 				if (config.gitStatus) git.onRender(ext.cwd);
 				const model = ext.model;
@@ -165,10 +181,9 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 						? limits.map((part) => theme.fg(usageColor(part.percent), formatUsagePart(part, time))).join(" ")
 						: undefined;
 
-				return layoutLine(
+				return layoutFooter(
 					{
 						loc,
-						counts: countsSegment(counts, theme),
 						model: modelPart,
 						context: contextPart,
 						bus: busSegment(bus, theme),
@@ -176,6 +191,7 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 						cost: costPart,
 						limits: limitPart,
 					},
+					counts,
 					width,
 					theme,
 				);
@@ -199,13 +215,32 @@ export function createStatuslineFeature(options: StatuslineFeatureOptions = {}) 
 						requestGit(ext.cwd);
 						tui.requestRender();
 					});
+					let regions: CountRegion[] = [];
 					return {
 						dispose() {
 							disposeBranch();
 							if (renderNow === requestRender) renderNow = undefined;
 						},
 						invalidate() {},
-						render: (width: number) => [renderLine(ext, theme, footerData.getGitBranch(), width)],
+						render: (width: number) => {
+							const layout = renderLine(ext, theme, footerData.getGitBranch(), width);
+							regions = layout.regions;
+							return [layout.line];
+						},
+						// Only fullscreen mode routes mouse events to components.
+						handleMouse: (event: TuiMouseEvent) => {
+							const kind = clickedCount(event, regions);
+							if (!kind) return undefined;
+							const show = (text: string, level: "info" | "warning" | "error") => {
+								try {
+									ext.ui.notify(text, level);
+								} catch {
+									// A list can resolve after /new, /resume, or /reload replaced this session's UI.
+								}
+							};
+							ctx.events.emit("statusline:list", { kind, show });
+							return { handled: true };
+						},
 					};
 				});
 			};

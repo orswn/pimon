@@ -165,6 +165,7 @@ All features are on by default. The list is in load order.
   - `B`, `M`: running background jobs and monitors of this pi process, shell and script, from the `background` feature.
   - `T`: armed timers of the current session, from the `background` feature.
   - A letter shows only when its feature is on. A narrow terminal drops the counts first.
+  - In fullscreen mode, a left click on `A`, `B`, `M`, or `T` shows the same list as `/agents`, `/background list`, `/monitor list`, or `/timers`.
 - Options:
   - `usage`: boolean, default `true`. Shows provider usage for `anthropic` and `openai-codex`. It calls their usage endpoints.
   - `usagePollSeconds`: integer, default `60`, from `30` to `3600`.

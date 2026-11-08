@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, TUI } from "@earendil-works/pi-tui";
+import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { ExecFn, ExecResult } from "../../src/core/exec.ts";
 import { clearReloadState } from "../../src/core/reload-state.ts";
@@ -68,6 +68,7 @@ interface StartOptions extends StatuslineFeatureOptions {
 	before?: AnyFeature[];
 	/** A host with a UI that ignores custom footers, like RPC mode. */
 	dropFooter?: boolean;
+	notify?: ExtensionUIContext["notify"];
 	settings?: Parameters<typeof createHarness>[0]["settings"];
 	prepareAgentDir?: (dir: string) => void;
 }
@@ -133,6 +134,7 @@ async function start(options: StartOptions = {}) {
 			: {
 					ui: {
 						theme,
+						...(options.notify ? { notify: options.notify } : {}),
 						setFooter: (next) => {
 							if (!options.dropFooter) factory = next;
 						},
@@ -819,5 +821,134 @@ describe("statusline agents count", () => {
 		const child = nodes.at(-1) as BusNode;
 		await child.stop({ announce: true });
 		await until(() => / A:0 B:0 M:0 T:0 │ /.test(s.line()));
+	});
+});
+
+describe("statusline count clicks", () => {
+	const stateRoot = mkdtempSync(join(tmpdir(), "statusline-clicks-"));
+	let paths: AgentPaths;
+	const placer: Placer = {
+		inside: () => true,
+		place: async () => {
+			throw new Error("no placement in this test");
+		},
+		alive: async () => true,
+		focus: async () => true,
+		close: async () => true,
+		describe: async () => "herdr: test",
+	};
+
+	beforeEach(() => {
+		process.env["PI_BACKGROUND_DIR"] = stateRoot;
+		paths = agentPaths(join(mkdtempSync(join(tmpdir(), "statusline-clicks-agents-")), "pi-agents"));
+	});
+
+	afterAll(() => {
+		rmSync(stateRoot, { recursive: true, force: true });
+	});
+
+	afterEach(async () => {
+		await harness?.shutdown();
+		await shutdownJobs(reloadSlot("background", "registry", 1, () => createRegistry("")));
+		delete process.env["PI_BACKGROUND_DIR"];
+	});
+
+	const mouse = (x: number, extra: Partial<TuiMouseEvent> = {}): TuiMouseEvent => ({
+		type: "click",
+		button: "left",
+		x,
+		y: 0,
+		screenX: x,
+		screenY: 40,
+		width: 200,
+		height: 1,
+		shift: false,
+		alt: false,
+		ctrl: false,
+		clickCount: 1,
+		...extra,
+	});
+
+	async function startAll(options: StartOptions = {}) {
+		const s = await start({ before: [background, bus, createAgentsFeature({ paths, placer })], ...options });
+		const component = s.mount();
+		const column = (letter: string) => {
+			const index = s.line().indexOf(` ${letter}:`);
+			if (index < 0) throw new Error(`no ${letter} count in the footer`);
+			return index + 1;
+		};
+		const click = (letter: string, extra: Partial<TuiMouseEvent> = {}) =>
+			component.handleMouse?.(mouse(column(letter), extra));
+		return { ...s, component, column, click };
+	}
+
+	it("emits one list event for a left click on a count and consumes it", async () => {
+		const s = await startAll();
+		const seen: string[] = [];
+		s.events().on("statusline:list", (event) => seen.push(event.kind));
+		expect(s.click("A")).toEqual({ handled: true });
+		expect(s.click("B")).toEqual({ handled: true });
+		expect(s.click("M")).toEqual({ handled: true });
+		expect(s.click("T")).toEqual({ handled: true });
+		expect(seen).toEqual(["agents", "background", "monitor", "timers"]);
+	});
+
+	it("leaves other gestures and places to pi", async () => {
+		const s = await startAll();
+		const seen: string[] = [];
+		s.events().on("statusline:list", (event) => seen.push(event.kind));
+		expect(s.click("B", { button: "right" })).toBeUndefined();
+		expect(s.click("B", { type: "press" })).toBeUndefined();
+		expect(s.click("B", { type: "drag" })).toBeUndefined();
+		expect(s.click("B", { type: "wheel", button: "none", wheelDelta: 1 })).toBeUndefined();
+		expect(s.click("B", { y: 1 })).toBeUndefined();
+		expect(s.component.handleMouse?.(mouse(s.column("B") - 1))).toBeUndefined();
+		expect(s.component.handleMouse?.(mouse(0))).toBeUndefined();
+		expect(seen).toEqual([]);
+	});
+
+	it("drops a list that arrives after its session UI is gone", async () => {
+		const s = await startAll({
+			notify: () => {
+				throw new Error("This extension ctx is stale after session replacement or reload.");
+			},
+		});
+		let show: ((text: string, level: "info" | "warning" | "error") => void) | undefined;
+		s.events().on("statusline:list", (event) => {
+			show = event.show;
+		});
+		s.click("B");
+		expect(() => show?.("late list", "info")).not.toThrow();
+	});
+
+	it("shows the text of each list command and starts no model run", async () => {
+		const s = await startAll();
+		s.h.respond([
+			fauxAssistantMessage(fauxToolCall("timer", { action: "set", name: "ci", delaySeconds: 600, reason: "ci" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage(fauxText("ok")),
+		]);
+		await s.h.session.prompt("go");
+		const requests = s.h.requests.length;
+		const entries = s.h.session.sessionManager.getEntries().length;
+		for (const [letter, command] of [
+			["A", "/agents"],
+			["B", "/background list"],
+			["M", "/monitor list"],
+			["T", "/timers"],
+		] as const) {
+			s.h.notifications.length = 0;
+			await s.h.session.prompt(command);
+			const expected = s.h.notifications.splice(0);
+			expect(expected).toHaveLength(1);
+			s.click(letter);
+			await until(() => s.h.notifications.length > 0);
+			await s.settle();
+			expect(s.h.notifications).toEqual(expected);
+		}
+		expect(s.h.notifications.at(-1)?.message).toContain("ci");
+		expect(s.h.requests.length).toBe(requests);
+		expect(s.h.session.sessionManager.getEntries().length).toBe(entries);
 	});
 });

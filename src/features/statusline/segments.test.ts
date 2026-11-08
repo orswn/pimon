@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import {
 	busSegment,
+	clickedCount,
 	compactPath,
 	countsSegment,
+	type CountRegion,
 	goalSegment,
+	layoutFooter,
 	layoutLine,
 	type LineParts,
 	type ThemeLike,
@@ -161,5 +165,98 @@ describe("line layout", () => {
 		const line = layoutLine(parts, full + 5, theme);
 		expect(line).toHaveLength(full + 5);
 		expect(line.endsWith("%".repeat(10))).toBe(true);
+	});
+});
+
+describe("count click regions", () => {
+	const parts = { loc: "L".repeat(10), model: "M".repeat(10), context: "C".repeat(10), bus: "B".repeat(10) };
+	const all = { agents: 2, background: 12, monitor: 0, timers: 1 };
+	const at = (line: string, text: string) => line.indexOf(text);
+	const region = (line: string, kind: CountRegion["kind"], text: string): CountRegion => ({
+		kind,
+		start: at(line, text),
+		end: at(line, text) + text.length,
+	});
+
+	it("keeps the line of layoutLine", () => {
+		const layout = layoutFooter(parts, all, 200, theme);
+		expect(layout.line).toBe(layoutLine({ ...parts, counts: countsSegment(all, theme) }, 200, theme));
+	});
+
+	it("gives each shown letter the columns of its item", () => {
+		const { line, regions } = layoutFooter(parts, all, 200, theme);
+		expect(line).toContain(" A:2 B:12 M:0 T:1 │ ");
+		expect(regions).toEqual([
+			region(line, "agents", "A:2"),
+			region(line, "background", "B:12"),
+			region(line, "monitor", "M:0"),
+			region(line, "timers", "T:1"),
+		]);
+	});
+
+	it("gives regions only to the published letters", () => {
+		const { line, regions } = layoutFooter(parts, { background: 0, monitor: 3, timers: 0 }, 120, theme);
+		expect(regions.map((item) => item.kind)).toEqual(["background", "monitor", "timers"]);
+		expect(regions[1]).toEqual(region(line, "monitor", "M:3"));
+		expect(layoutFooter(parts, {}, 120, theme).regions).toEqual([]);
+	});
+
+	it("gives no regions when the counts are dropped", () => {
+		const shown = layoutFooter(parts, all, 200, theme);
+		const used = 200 - (shown.line.match(/ +(?=A:)/)?.[0].length ?? 0);
+		expect(layoutFooter(parts, all, used + 1, theme).regions).toHaveLength(4);
+		const narrow = layoutFooter(parts, all, used, theme);
+		expect(narrow.line).not.toContain("A:2");
+		expect(narrow.regions).toEqual([]);
+	});
+
+	it("measures a long loc with footer glyphs as the layout does", () => {
+		const loc = `…/to/leaf · main ↑1 ↓2 ${"x".repeat(60)}`;
+		const { line, regions } = layoutFooter({ ...parts, loc }, all, 160, theme);
+		expect(regions).toEqual([
+			region(line, "agents", "A:2"),
+			region(line, "background", "B:12"),
+			region(line, "monitor", "M:0"),
+			region(line, "timers", "T:1"),
+		]);
+	});
+
+	it("counts wide chars in loc by column", () => {
+		const loc = "~/項目/日本語 · main 😀";
+		const { line, regions } = layoutFooter({ ...parts, loc }, all, 160, theme);
+		const column = (text: string) => visibleWidth(line.slice(0, line.indexOf(text)));
+		expect(regions[0]).toEqual({ kind: "agents", start: column("A:2"), end: column("A:2") + 3 });
+		expect(regions[3]).toEqual({ kind: "timers", start: column("T:1"), end: column("T:1") + 3 });
+		expect(regions[0]?.start).toBeGreaterThan(line.indexOf("A:2"));
+	});
+
+	it("maps a left click on row 0 to the letter under it", () => {
+		const { line, regions } = layoutFooter(parts, all, 200, theme);
+		const click = (x: number, extra: Partial<Parameters<typeof clickedCount>[0]> = {}) =>
+			clickedCount({ type: "click", button: "left", x, y: 0, ...extra }, regions);
+		expect(click(at(line, "A:2"))).toBe("agents");
+		expect(click(at(line, "A:2") + 2)).toBe("agents");
+		expect(click(at(line, "B:12") + 3)).toBe("background");
+		expect(click(at(line, "M:0"))).toBe("monitor");
+		expect(click(at(line, "T:1") + 1)).toBe("timers");
+	});
+
+	it("ignores clicks outside the letters and other gestures", () => {
+		const { line, regions } = layoutFooter(parts, all, 200, theme);
+		const click = (x: number, extra: Partial<Parameters<typeof clickedCount>[0]> = {}) =>
+			clickedCount({ type: "click", button: "left", x, y: 0, ...extra }, regions);
+		const a = at(line, "A:2");
+		expect(click(a + 3)).toBeUndefined();
+		expect(click(a - 1)).toBeUndefined();
+		expect(click(at(line, "T:1") + 3)).toBeUndefined();
+		expect(click(at(line, "│"))).toBeUndefined();
+		expect(click(at(line, "M".repeat(10)))).toBeUndefined();
+		expect(click(0)).toBeUndefined();
+		expect(click(a, { y: 1 })).toBeUndefined();
+		expect(click(a, { button: "right" })).toBeUndefined();
+		expect(click(a, { button: "middle" })).toBeUndefined();
+		expect(click(a, { type: "press" })).toBeUndefined();
+		expect(click(a, { type: "release" })).toBeUndefined();
+		expect(click(a, { type: "drag" })).toBeUndefined();
 	});
 });

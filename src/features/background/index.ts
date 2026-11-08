@@ -185,6 +185,20 @@ export const background = defineFeature({
 		registerCommand(ctx.pi, reg, "monitor");
 		registerTimersCommand(ctx.pi, timers);
 
+		ctx.events.on("statusline:list", ({ kind, show }) => {
+			if (kind === "timers") {
+				if (timers.sessionId === undefined) return;
+				const notice = timersCommand(timers, timers.sessionId, "list");
+				show(notice.text, notice.level);
+			} else if (kind === "background" || kind === "monitor") {
+				// The list action does not use a cwd.
+				void jobsCommand(reg, kind, "list", "").then(
+					(notice) => show(notice.text, notice.level),
+					(error: unknown) => show(error instanceof Error ? error.message : String(error), "error"),
+				);
+			}
+		});
+
 		ctx.onSessionStart((event, extensionCtx) => {
 			bindSession(reg, extensionCtx);
 			bindTimers(timers, extensionCtx);
@@ -309,21 +323,31 @@ function createTimerTool(timers: TimerStore) {
 	});
 }
 
+interface CommandNotice {
+	text: string;
+	level: "info" | "error";
+}
+
+function timersCommand(timers: TimerStore, sessionId: string, args: string): CommandNotice {
+	const [subcommand, rest] = splitFirst(args.trim());
+	const params =
+		subcommand === "" || subcommand === "list"
+			? { action: "list" }
+			: subcommand === "cancel"
+				? { action: "cancel", name: rest }
+				: undefined;
+	const result = params
+		? runTimerAction(timers, sessionId, params)
+		: { ok: false, text: `Unknown timers command: ${subcommand}. Use /timers or /timers cancel <name>.` };
+	return { text: result.text, level: result.ok ? "info" : "error" };
+}
+
 function registerTimersCommand(pi: ExtensionAPI, timers: TimerStore): void {
 	pi.registerCommand("timers", {
 		description: "List the timers of this session, or cancel one with /timers cancel <name>",
 		handler: async (args, extensionCtx) => {
-			const [subcommand, rest] = splitFirst(args.trim());
-			const params =
-				subcommand === "" || subcommand === "list"
-					? { action: "list" }
-					: subcommand === "cancel"
-						? { action: "cancel", name: rest }
-						: undefined;
-			const result = params
-				? runTimerAction(timers, extensionCtx.sessionManager.getSessionId(), params)
-				: { ok: false, text: `Unknown timers command: ${subcommand}. Use /timers or /timers cancel <name>.` };
-			if (extensionCtx.hasUI) extensionCtx.ui.notify(result.text, result.ok ? "info" : "error");
+			const notice = timersCommand(timers, extensionCtx.sessionManager.getSessionId(), args);
+			if (extensionCtx.hasUI) extensionCtx.ui.notify(notice.text, notice.level);
 		},
 	});
 }
@@ -781,24 +805,20 @@ function registerCommand(pi: ExtensionAPI, reg: Registry, kind: Kind): void {
 				: "Start, edit, inspect, and stop output monitors that wake the LLM on a match",
 		handler: async (args, extensionCtx) => {
 			bindSession(reg, extensionCtx);
-			const notify = (text: string, level: "info" | "error") => {
-				if (extensionCtx.hasUI) extensionCtx.ui.notify(text, level);
-			};
-			const trimmed = args.trim();
-			if (!trimmed || trimmed === "help" || trimmed === "--help") {
-				notify(usage(kind), "info");
-				return;
-			}
-			const [subcommand, rest] = splitFirst(trimmed);
-			const params = parseCliParams(kind, subcommand, rest);
-			if (typeof params === "string") {
-				notify(`${params}\n\n${usage(kind)}`, "error");
-				return;
-			}
-			const result = await runAction(reg, kind, params, extensionCtx.cwd);
-			notify(typeof result === "string" ? result : renderLogs(result), "info");
+			const notice = await jobsCommand(reg, kind, args, extensionCtx.cwd);
+			if (extensionCtx.hasUI) extensionCtx.ui.notify(notice.text, notice.level);
 		},
 	});
+}
+
+async function jobsCommand(reg: Registry, kind: Kind, args: string, cwd: string): Promise<CommandNotice> {
+	const trimmed = args.trim();
+	if (!trimmed || trimmed === "help" || trimmed === "--help") return { text: usage(kind), level: "info" };
+	const [subcommand, rest] = splitFirst(trimmed);
+	const params = parseCliParams(kind, subcommand, rest);
+	if (typeof params === "string") return { text: `${params}\n\n${usage(kind)}`, level: "error" };
+	const result = await runAction(reg, kind, params, cwd);
+	return { text: typeof result === "string" ? result : renderLogs(result), level: "info" };
 }
 
 export function parseCliParams(kind: Kind, subcommand: string, rest: string): Record<string, unknown> | string {

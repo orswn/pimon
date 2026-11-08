@@ -11,7 +11,7 @@ import {
 	spawnSource,
 	startChildSession,
 } from "./child.ts";
-import { registerCommands } from "./commands.ts";
+import { registerCommands, showAgentsList } from "./commands.ts";
 import { createHerdrPlacer, HERDR_START_TIMEOUT_MS, type Placer } from "./placement.ts";
 import { AGENTS_PROMPT, delegatedPrompt } from "./prompt.ts";
 import { ChildRecords } from "./records.ts";
@@ -135,6 +135,9 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				},
 			});
 			registerCommands(ctx.pi, () => host);
+			ctx.events.on("statusline:list", ({ kind, show }) => {
+				if (kind === "agents") void showAgentsList(host, show);
+			});
 
 			bus.onPeerGone((event) => {
 				leftEndpoints.add(event.record.instanceId);
