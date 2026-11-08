@@ -4,9 +4,12 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-08
+
 ### Changed
 
 - The monitor match digest and the timeout notice name the command only for a job with a generated name.
+- First stable release. From this version, semantic versioning covers the surfaces that the README lists under Stability.
 
 ### Fixed
 
