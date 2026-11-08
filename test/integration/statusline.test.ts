@@ -609,7 +609,7 @@ describe("statusline work counts", () => {
 	const call = (tool: string, args: Parameters<typeof fauxToolCall>[1]) =>
 		fauxAssistantMessage(fauxToolCall(tool, args), { stopReason: "toolUse" });
 	const quiet: ExecFn = async () => ({ code: 0, stdout: "", stderr: "" });
-	const counts = (line: string) => /│ ((?:[ABMT]:\d+ ?)+) /.exec(line)?.[1]?.trim();
+	const counts = (line: string) => / ((?:[ABMT]:\d+ )*[ABMT]:\d+) │ /.exec(line)?.[1];
 
 	beforeEach(() => {
 		process.env["PI_BACKGROUND_DIR"] = stateRoot;
@@ -633,7 +633,7 @@ describe("statusline work counts", () => {
 		const s = await start({ before: [background] });
 		const line = s.line();
 		expect(counts(line)).toBe("B:0 M:0 T:0");
-		expect(line).toMatch(/fallback-branch │ B:0 M:0 T:0 /);
+		expect(line).toMatch(/fallback-branch +B:0 M:0 T:0 │ /);
 	});
 
 	it("counts a running background job until it exits", async () => {
@@ -742,7 +742,7 @@ describe("statusline work counts", () => {
 		const s = await start({ before: [background] });
 		s.busIdentity({ name: "worker-1" });
 		const wide = s.line(200);
-		const gap = / +(?=faux - )/.exec(wide)?.[0].length ?? 0;
+		const gap = / +(?=A:|B:)/.exec(wide)?.[0].length ?? 0;
 		const narrow = s.line(wide.length - gap);
 		expect(narrow).not.toContain("B:0");
 		expect(narrow).toContain("worker-1");
@@ -808,7 +808,7 @@ describe("statusline agents count", () => {
 				writeFileSync(join(dir, "agents", "worker.md"), "---\nname: worker\n---\nYou work.\n");
 			},
 		});
-		expect(s.line()).toMatch(/│ A:0 B:0 M:0 T:0 /);
+		expect(s.line()).toMatch(/ A:0 B:0 M:0 T:0 │ /);
 		s.h.respond([
 			fauxAssistantMessage(fauxToolCall("pi_agents", { action: "spawn", role: "worker", task: "go" }), {
 				stopReason: "toolUse",
@@ -818,11 +818,11 @@ describe("statusline agents count", () => {
 			fauxAssistantMessage(fauxText("closing")),
 		]);
 		await s.h.session.prompt("spawn one");
-		expect(s.line()).toMatch(/│ A:1 B:0 M:0 T:0 /);
+		expect(s.line()).toMatch(/ A:1 B:0 M:0 T:0 │ /);
 
 		await s.h.session.prompt("close it");
 		const child = nodes.at(-1) as BusNode;
 		await child.stop({ announce: true });
-		await until(() => /│ A:0 /.test(s.line()));
+		await until(() => / A:0 B:0 M:0 T:0 │ /.test(s.line()));
 	});
 });

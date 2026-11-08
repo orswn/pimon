@@ -132,6 +132,7 @@ export function layoutLine(parts: LineParts, width: number, theme: ThemeLike): s
 		const hidden = new Set<string>(DROP_ORDER.slice(0, drop));
 		const show = (key: (typeof DROP_ORDER)[number]) => (hidden.has(key) ? undefined : parts[key]);
 		const right = [
+			show("counts"),
 			[parts.model, show("bus"), show("goal")].filter(Boolean).join(theme.fg("dim", DOT)),
 			parts.context,
 			show("cost"),
@@ -139,12 +140,11 @@ export function layoutLine(parts: LineParts, width: number, theme: ThemeLike): s
 		]
 			.filter(Boolean)
 			.join(theme.fg("dim", SEP));
-		const left = [parts.loc, show("counts")].filter(Boolean).join(theme.fg("dim", SEP));
-		return { left, right, used: footerWidth(left) + footerWidth(right) };
+		return { right, used: footerWidth(parts.loc) + footerWidth(right) };
 	};
 	let drop = 0;
 	let line = compose(drop);
 	while (line.used >= width && drop < DROP_ORDER.length) line = compose(++drop);
 	const gap = " ".repeat(Math.max(1, width - line.used));
-	return truncateToWidth(line.left + gap + line.right, width, "");
+	return truncateToWidth(parts.loc + gap + line.right, width, "");
 }

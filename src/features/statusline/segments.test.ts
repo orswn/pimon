@@ -128,9 +128,11 @@ describe("line layout", () => {
 		expect(shown(full - 39)).toEqual([]);
 	});
 
-	it("shows the counts after the location, behind the group separator", () => {
+	it("shows the counts on the right, before the model and a group separator", () => {
 		const line = layoutLine({ ...parts, counts: "A:0 B:1" }, 200, theme);
-		expect(line.startsWith(`${"L".repeat(10)} │ A:0 B:1 `)).toBe(true);
+		expect(line.startsWith(`${"L".repeat(10)} `)).toBe(true);
+		expect(line).not.toContain(`${"L".repeat(10)} │`);
+		expect(line).toContain(` A:0 B:1 │ ${"M".repeat(10)}`);
 	});
 
 	it("drops the counts before the bus", () => {

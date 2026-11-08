@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Changed
+
+- The statusline work counts moved to the right side, before the model and a group separator.
+
 ## [1.2.0] - 2026-11-09
 
 ### Added
