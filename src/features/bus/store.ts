@@ -69,6 +69,8 @@ export class BusStore {
 		store.inbox.push(...snapshot.inbox);
 		store.outbox.push(...snapshot.outbox);
 		for (const id of snapshot.unread) store.unread.add(id);
+		// A snapshot from an older version can hold more than the kept envelopes.
+		store.trim();
 		return store;
 	}
 
@@ -207,6 +209,8 @@ export class BusStore {
 	private trim(): void {
 		this.inbox.splice(0, Math.max(0, this.inbox.length - MAX_IN_MEMORY));
 		this.outbox.splice(0, Math.max(0, this.outbox.length - MAX_IN_MEMORY));
+		const kept = new Set(this.inbox.map((envelope) => envelope.id));
+		for (const id of this.unread) if (!kept.has(id)) this.unread.delete(id);
 	}
 }
 
