@@ -49,6 +49,21 @@ describe("digest text", () => {
 		expect(text).toContain("  hello");
 	});
 
+	it("shows a subject only when it differs from the thread title", () => {
+		const first = envelope(1, "do it", { subject: "Delegated task" });
+		const second = envelope(2, "also this", { subject: "Follow up" });
+		const { text } = renderDigest(store, { envelopes: [first, second], notices: [] });
+		expect(text.split("\n")).toEqual([
+			"Thread: Delegated task",
+			"threadId: 111111110000",
+			"- note from sender owner:333333334444 messageId=000000010000:",
+			"  do it",
+			"- note from sender owner:333333334444 messageId=000000020000:",
+			"  subject: Follow up",
+			"  also this",
+		]);
+	});
+
 	it("names the question that an answer settles", () => {
 		const question = envelope(1, "what now?");
 		store.addOutbound(question);

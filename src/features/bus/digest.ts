@@ -60,7 +60,8 @@ export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDig
 	let bytes = 0;
 	let full = false;
 	for (const [threadId, envelopes] of groups) {
-		const header = [`Thread: ${threadTitle(store, threadId, envelopes)}`, `threadId: ${shortId(threadId)}`];
+		const title = threadTitle(store, threadId, envelopes);
+		const header = [`Thread: ${title}`, `threadId: ${shortId(threadId)}`];
 		let headerWritten = false;
 		for (const envelope of envelopes) {
 			if (full || included.length >= MAX_DIGEST_ITEMS) {
@@ -68,7 +69,7 @@ export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDig
 				full = true;
 				continue;
 			}
-			const block = renderItem(store, envelope);
+			const block = renderItem(store, envelope, title);
 			const cost = Buffer.byteLength([...(headerWritten ? [] : header), ...block].join("\n"), "utf8");
 			if (bytes + cost > MAX_DIGEST_BYTES && included.length > 0) {
 				omitted.push(envelope);
@@ -91,7 +92,7 @@ export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDig
 	return { text: lines.join("\n").trim(), included, omitted };
 }
 
-function renderItem(store: BusStore, envelope: Envelope): string[] {
+function renderItem(store: BusStore, envelope: Envelope, title: string): string[] {
 	const answers = envelope.corrId ? store.byExactId(envelope.corrId) : undefined;
 	const answering = answers ? ` answering your "${truncate(answers.subject || answers.body, 40)}"` : "";
 	const cut = Buffer.byteLength(envelope.body, "utf8") > MAX_DIGEST_BODY_BYTES;
@@ -100,7 +101,7 @@ function renderItem(store: BusStore, envelope: Envelope): string[] {
 		: envelope.body;
 	return [
 		`- ${envelope.kind} from ${envelope.from.name} ${ownerRef(envelope.from)} messageId=${shortId(envelope.id)}${answering}:`,
-		envelope.subject ? indent(`subject: ${envelope.subject}`) : undefined,
+		envelope.subject && envelope.subject !== title ? indent(`subject: ${envelope.subject}`) : undefined,
 		indent(body),
 		envelope.data === undefined ? undefined : indent(`data: ${truncate(JSON.stringify(envelope.data), 400)}`),
 	].filter((line): line is string => Boolean(line));
