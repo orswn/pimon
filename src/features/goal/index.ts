@@ -65,6 +65,13 @@ export interface GoalStatePayload {
 	timerDueAt?: number;
 }
 
+declare module "../../core/events.ts" {
+	interface PimonEvents {
+		/** Sent on each change and at each session start. `{}` means no goal. */
+		"goal:state": { state?: string; turns?: number; timerDueAt?: number };
+	}
+}
+
 export interface GoalFeatureOptions {
 	/** Runs check commands. Tests inject a recorder. */
 	exec?: ExecFn;
@@ -150,13 +157,12 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			// Set while the goal cancels its own timers, so that cancel raises no warning.
 			let releasing = false;
 
-			// TODO(okka): remove when the statusline moves into pimon.
 			const publish = () => {
 				const record = life.record;
 				const payload: GoalStatePayload = record ? { state: record.state, turns: record.turns } : {};
 				const due = sessionId === undefined ? [] : timers.armed(sessionId).map((timer) => timer.dueAt);
 				if (record && due.length > 0) payload.timerDueAt = Math.min(...due);
-				pi.events.emit("goal:state", payload);
+				ctx.events.emit("goal:state", payload);
 			};
 
 			/** A goal that ends, pauses, or is replaced takes the timers set since it started with it. */
@@ -297,11 +303,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			const markTerminal = () => run({ type: "terminal" });
 
 			ctx.promptSection({ name: "goal", render: () => GOAL_PROMPT });
-
-			// TODO(okka): remove when the statusline moves into pimon.
-			pi.events.on("goal:refresh", () => {
-				if (live) publish();
-			});
 
 			ctx.events.on("notify:blocked", (payload) => {
 				if (!live) return undefined;

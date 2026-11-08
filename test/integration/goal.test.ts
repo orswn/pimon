@@ -63,7 +63,7 @@ const probe = defineFeature({
 	description: "test probe",
 	defaultEnabled: true,
 	setup(ctx) {
-		ctx.pi.events.on("goal:state", (payload) => probeEvents.push(payload as GoalStatePayload));
+		ctx.events.on("goal:state", (payload) => probeEvents.push(payload as GoalStatePayload));
 		probeWake = (customType, content) => ctx.wake({ customType, content, display: true });
 		ctx.pi.registerTool({
 			name: "nested_claim",

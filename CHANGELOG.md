@@ -4,6 +4,16 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- `statusline` feature with the footer status line and the working indicator. Moved from the standalone extension. Options: `usage`, `usagePollSeconds`, `gitStatus`.
+
+### Changed
+
+- Session token and cost totals in the status line count all session entries, like pi's built-in footer. The old extension counted only the assistant messages of the current branch.
+- Usage limits show for the `anthropic` and `openai-codex` providers with an OAuth login. Other providers show no limits. The old extension showed Codex limits for every provider except `claude-code`.
+- The `goal` feature sends `goal:state` on the pimon event bus instead of `pi.events`. The `goal:refresh` event is gone. The goal sends its state at each session start.
+
 ## [0.7.0] - 2026-11-08
 
 ### Added
