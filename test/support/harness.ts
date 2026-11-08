@@ -1,12 +1,20 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type FauxResponseStep, fauxProvider, type Message } from "@earendil-works/pi-ai";
+import {
+	type FauxModelDefinition,
+	type FauxResponseStep,
+	fauxProvider,
+	type Message,
+	type ModelsStore,
+} from "@earendil-works/pi-ai";
 import {
 	type AgentSession,
 	createAgentSession,
 	DefaultResourceLoader,
 	type ExtensionFactory,
+	type ExtensionContext,
+	type ExtensionUIContext,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -14,16 +22,23 @@ import {
 import type { AnyFeature } from "../../src/core/feature.ts";
 import { createPimon, type PimonRuntime } from "../../src/core/runtime.ts";
 
+type Settings = NonNullable<Parameters<typeof SettingsManager.inMemory>[0]>;
+type ExtensionMode = ExtensionContext["mode"];
+
 export interface Harness {
 	session: AgentSession;
 	runtime: PimonRuntime;
+	modelRuntime: ModelRuntime;
 	agentDir: string;
 	cwd: string;
 	requests: Message[][];
 	extensionErrors: string[];
+	notifications: { message: string; level: string | undefined }[];
 	respond(steps: FauxResponseStep[]): void;
 	/** Resolves once the model has received at least `count` requests, then waits for the session to go idle. */
 	waitForRequests(count: number, timeoutMs?: number): Promise<void>;
+	/** Emit session_shutdown like a quitting host. */
+	shutdown(): Promise<void>;
 	dispose(): void;
 }
 
@@ -35,6 +50,51 @@ export interface HarnessOptions {
 	hostBindings?: boolean;
 	/** Extensions that load after pimon. */
 	extensions?: ExtensionFactory[];
+	mode?: ExtensionMode;
+	/** Merged over the default in-memory settings, one level deep. */
+	settings?: Partial<Settings>;
+	fauxModels?: FauxModelDefinition[];
+	modelsStore?: ModelsStore;
+	/** Bind a UI that records notifications. Given methods replace the recording no-ops. */
+	ui?: Partial<ExtensionUIContext>;
+}
+
+const DEFAULT_SETTINGS: Partial<Settings> = { compaction: { enabled: false }, retry: { enabled: false } };
+
+function mergeSettings(overrides: Partial<Settings> = {}): Partial<Settings> {
+	const merged: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+	for (const [key, value] of Object.entries(overrides)) {
+		const base = merged[key];
+		const bothObjects = isPlainObject(base) && isPlainObject(value);
+		merged[key] = bothObjects ? { ...base, ...value } : value;
+	}
+	return merged as Partial<Settings>;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function recordingUI(
+	notifications: Harness["notifications"],
+	overrides: Partial<ExtensionUIContext>,
+): ExtensionUIContext {
+	const base: Partial<ExtensionUIContext> = {
+		notify: (message, level) => notifications.push({ message, level }),
+		custom: async () => undefined as never,
+		getEditorText: () => "",
+		...overrides,
+	};
+	return new Proxy(base, {
+		get: (target, key) => {
+			if (key in target) return target[key as keyof typeof target];
+			// `then` is probed when the context is awaited; it must stay absent.
+			if (typeof key !== "string" || key === "then") return undefined;
+			return () => {
+				throw new Error(`harness UI has no ${key}(); pass it in createHarness({ ui })`);
+			};
+		},
+	}) as ExtensionUIContext;
 }
 
 export async function createHarness(options: HarnessOptions): Promise<Harness> {
@@ -44,10 +104,11 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 	for (const dir of [agentDir, cwd]) mkdirSync(dir);
 	options.setupAgentDir?.(agentDir);
 
-	const faux = fauxProvider();
+	const faux = fauxProvider(options.fauxModels ? { models: options.fauxModels } : undefined);
 	const modelRuntime = await ModelRuntime.create({
 		authPath: join(agentDir, "auth.json"),
 		modelsPath: null,
+		...(options.modelsStore ? { modelsStore: options.modelsStore } : {}),
 		refreshOnCreate: false,
 	});
 	modelRuntime.registerNativeProvider(faux.provider);
@@ -84,24 +145,29 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 		thinkingLevel: "off",
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(cwd),
-		settingsManager: SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } }),
+		settingsManager: SettingsManager.inMemory(mergeSettings(options.settings)),
 	});
 	const extensionErrors: string[] = [];
-	await session.bindExtensions(
-		options.hostBindings === false
+	const notifications: Harness["notifications"] = [];
+	await session.bindExtensions({
+		...(options.hostBindings === false
 			? {}
-			: { onError: (error) => extensionErrors.push(`${error.extensionPath} ${error.event}: ${error.error}`) },
-	);
+			: { onError: (error) => extensionErrors.push(`${error.extensionPath} ${error.event}: ${error.error}`) }),
+		...(options.mode ? { mode: options.mode } : {}),
+		...(options.ui ? { uiContext: recordingUI(notifications, options.ui) } : {}),
+	});
 	if (!runtime) throw new Error("pimon factory did not run");
 
 	const requests: Message[][] = [];
 	return {
 		session,
 		runtime,
+		modelRuntime,
 		agentDir,
 		cwd,
 		requests,
 		extensionErrors,
+		notifications,
 		respond(steps) {
 			faux.setResponses(
 				steps.map((step) =>
@@ -125,6 +191,9 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 				await new Promise((resolve) => setTimeout(resolve, 20));
 			}
 			await session.waitForIdle();
+		},
+		async shutdown() {
+			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		},
 		dispose() {
 			session.dispose();
