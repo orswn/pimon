@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- The `stale` feature adds one short message to the first run after an idle gap of 30+ minutes, a pi reload or restart, a host suspend, or a host restart. Option `stale.idleMinutes`.
+
 ## [1.3.0] - 2026-11-09
 
 ### Changed

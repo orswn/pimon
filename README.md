@@ -130,6 +130,29 @@ All features are on by default. The list is in load order.
 - Role files: `~/.pi/agent/agents/<name>.md`. With the `pi_agents` parameter `projectRoles: true`, also `.pi/agents/<name>.md` in the cwd or a parent dir.
   - Frontmatter keys: `name`, `description`, `tools`, `model`, `thinking`, `labels`, `mcp`.
 
+### `stale`
+
+- Purpose: tells the model about a gap in the session before a run. The model has no clock.
+- A run gets one `<session-gap>` message when one of these happened since the last activity:
+  - The session was idle for `idleMinutes` or more. Activity is the last user, assistant, or tool result message in the session branch. A stored notice without a run does not count.
+  - pi reloaded its extensions. A reload before the first run keeps a pending restart.
+  - pi restarted: pi started into a session that has messages, or switched to such a session that this pi process did not run before.
+    - A new session and a fork do not count.
+    - A switch back to a session that this pi process ran does not count. Its jobs still run.
+  - The host was suspended for 60 s or more while this pi process ran.
+  - The host restarted before a pi restart.
+    - On Linux, the kernel boot id differs from the boot id saved in the session.
+    - Elsewhere, or with an old saved entry that has no boot id, the boot time differs by more than 5 s.
+- Each event gives one message, at the first run after it. Every run kind gets it: prompts, wakes, and timers.
+- The message has the gap, the local time with the UTC offset, and the events.
+  - After a pi or host restart, it also says that jobs, monitors, timers, and bus endpoints of the old process are lost.
+- A reload alone, under the idle limit, gives no line that asks the model to check facts. A reload keeps jobs, timers, and the session.
+- Model-visible text: about 120 chars for a reload alone. About 135 chars for an idle gap. About 280 chars for all lines. Nothing on other runs. No prompt section and no tool.
+- The boot time and boot id are saved in a `pimon-stale` session entry at a session start when the session has none, the boot changed, or the boot id is new. The model does not see it.
+- Files read: `/proc/sys/kernel/random/boot_id` on Linux.
+- Options:
+  - `idleMinutes`: integer, default `30`, minimum `1`.
+
 ### `statusline`
 
 - Purpose: footer status line and working indicator.

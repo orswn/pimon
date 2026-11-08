@@ -172,7 +172,9 @@ describe("agents feature", () => {
 
 			expect(busService().name).toBe("impl-w");
 			expect(busService().labels).toMatchObject({ role: "worker", parent: PARENT, spawn: spawnId, depth: "1" });
-			const entries = h.session.sessionManager.getEntries().filter((entry) => entry.type === "custom");
+			const entries = h.session.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType !== "pimon-stale");
 			expect(entries).toHaveLength(1);
 			const stored = JSON.stringify(entries[0]);
 			expect(stored).toContain(SPAWN_ENTRY);

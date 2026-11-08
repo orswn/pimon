@@ -10,6 +10,7 @@ import { goal } from "./goal/index.ts";
 import { harness } from "./harness/index.ts";
 import { imageBudget } from "./image-budget/index.ts";
 import { notify } from "./notify/index.ts";
+import { stale } from "./stale/index.ts";
 import { statusline } from "./statusline/index.ts";
 import { vi } from "./vi/index.ts";
 
@@ -25,6 +26,7 @@ export const features: readonly AnyFeature[] = [
 	discovery,
 	bus,
 	agents,
+	stale,
 	statusline,
 	vi,
 ];
