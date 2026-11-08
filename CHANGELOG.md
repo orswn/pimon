@@ -4,6 +4,30 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-08
+
+### Added
+
+- `notify` feature with the `notify` tool and a notify service for other features. Moved from the standalone extension.
+- `goal` feature with `/goal`, `/goal-check`, and the `goal_wait` and `goal_done` tools. Moved from the standalone extension.
+- `<notify>` and `<goal>` prompt sections.
+
+### Changed
+
+- Each feature that starts processes owns its own process runner.
+
+### Fixed
+
+- `/goal`, pause, and clear during a run no longer abort the running tool.
+- Replacing a goal in the TUI asks for confirmation. A short argument that looks like a verb, such as `/goal l resume`, is not taken as a new goal without confirmation.
+- A run that the user aborts pauses the goal as user input, not as a model error.
+- A goal check command can run for up to 15 minutes.
+- A late tool result of the previous goal does not count as evidence for the new goal.
+- Goal pause and blocked notifications are never muted by the rate limit.
+- Monitor lines longer than 16 000 characters are split also when they arrive with their newline.
+- A job that a timeout or a once monitor cannot kill is reported to the agent.
+- A log file of a running sibling pi is not reused.
+
 ## [0.5.0] - 2026-11-08
 
 ### Added
