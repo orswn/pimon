@@ -16,7 +16,6 @@ export interface LaunchEnv {
 	debug?: string | undefined;
 	dir?: string | undefined;
 	agentLabel?: string | undefined;
-	agentsTools?: string | undefined;
 	spawnFile?: string | undefined;
 }
 
@@ -33,7 +32,6 @@ const SOURCES = {
 	debug: "PI_BUS_DEBUG",
 	dir: "PI_BUS_DIR",
 	agentLabel: "PI_AGENT_LABEL",
-	agentsTools: "PI_AGENTS_TOOLS",
 	spawnFile: "PIMON_SPAWN_FILE",
 } as const satisfies Record<keyof LaunchEnv, string>;
 
@@ -64,18 +62,8 @@ export function deleteIdentityEnv(env: NodeJS.ProcessEnv): void {
 	for (const key of DELETED_ENV_KEYS) delete env[key];
 }
 
-const OWNER_KEY = "__piBusOwner";
-
-/** The standalone bus kept its owner here. Adopting it keeps children spawned before the switch. */
-export function adoptOwner(
-	launch: LaunchEnv,
-	holder: Record<string, unknown> = globalThis as Record<string, unknown>,
-): string {
-	const previous = holder[OWNER_KEY];
-	const owner = typeof previous === "string" && previous ? previous : launch.owner || randomUUID();
-	// TODO(okka): remove when no pi runs the standalone bus extension
-	holder[OWNER_KEY] = owner;
-	return owner;
+export function adoptOwner(launch: LaunchEnv): string {
+	return launch.owner || randomUUID();
 }
 
 export function busLabels(launch: LaunchEnv, cwd: string | undefined): Record<string, string> {

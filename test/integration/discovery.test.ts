@@ -204,10 +204,10 @@ describe("discovery with the pi models store", () => {
 		writeFileSync(join(cacheDir, `${PROVIDER}.json`), JSON.stringify([chatModel(id)]));
 	};
 
-	it("falls back to the old cache file when the store is empty", async () => {
+	it("ignores the old cache file when the store is empty", async () => {
 		writeOldCache("cached");
 		const harness = await start(new InMemoryModelsStore());
-		expect(listed(harness)).toEqual(["cached"]);
+		expect(listed(harness)).toEqual([]);
 		expect(seen).toEqual([]);
 	});
 
@@ -217,16 +217,14 @@ describe("discovery with the pi models store", () => {
 		["missing provider", JSON.stringify({ other: { models: [chatModel("x")] } })],
 		["models not an array", JSON.stringify({ [PROVIDER]: { models: "alpha" } })],
 		["model without a string id", JSON.stringify({ [PROVIDER]: { models: [{ name: "x" }] } })],
-	])("uses the old cache when the store file is %s", async (_name, storeFile) => {
-		writeOldCache("cached");
+	])("lists no models when the store file is %s", async (_name, storeFile) => {
 		const harness = await start(new InMemoryModelsStore(), storeFile);
-		expect(listed(harness)).toEqual(["cached"]);
-		expect(available(harness)).toEqual(["cached"]);
+		expect(listed(harness)).toEqual([]);
+		expect(available(harness)).toEqual([]);
 		expect(harness.extensionErrors).toEqual([]);
 	});
 
 	it("registers without saved models when the provider has no baseUrl", async () => {
-		writeOldCache("cached");
 		const harness = await createHarness({
 			features: [discovery],
 			modelsStore: new InMemoryModelsStore(),

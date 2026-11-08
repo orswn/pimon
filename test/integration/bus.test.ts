@@ -10,8 +10,6 @@ import type { Envelope } from "../../src/features/bus/protocol.ts";
 import { busDirs } from "../../src/features/bus/registry.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
 
-const OWNER_KEY = "__piBusOwner";
-
 let service: BusService | undefined;
 const capture = defineFeature({
 	id: "bus-capture",
@@ -40,7 +38,6 @@ function busService(): BusService {
 	if (!service) throw new Error("no bus service");
 	return service;
 }
-const globals = globalThis as Record<string, unknown>;
 
 async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
@@ -68,7 +65,6 @@ describe("bus feature", () => {
 	const handlers = new Map<string, (envelope: Envelope) => void>();
 
 	beforeEach(() => {
-		delete globals[OWNER_KEY];
 		clearReloadState();
 	});
 
@@ -80,7 +76,6 @@ describe("bus feature", () => {
 		await harness?.shutdown();
 		harness?.dispose();
 		harness = undefined;
-		delete globals[OWNER_KEY];
 		clearReloadState();
 	});
 
@@ -104,14 +99,12 @@ describe("bus feature", () => {
 		return harness;
 	}
 
-	it("keeps presence under the agent dir and adopts the standalone owner", async () => {
-		globals[OWNER_KEY] = "0123456789abcdef0123456789abcdef";
+	it("keeps presence under the agent dir", async () => {
 		const h = await start();
 		const service = busService();
-		expect(service.owner).toBe("0123456789abcdef0123456789abcdef");
 		const peer = await startPeer("probe");
 		const seen = peer.refreshPeers().find((record) => record.instanceId === service.instanceId);
-		expect(seen?.owner).toBe("0123456789abcdef0123456789abcdef");
+		expect(seen?.owner).toBe(service.owner);
 		expect(seen?.sock.startsWith(h.agentDir) || seen?.sock.includes("pi-bus-")).toBe(true);
 	});
 

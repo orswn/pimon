@@ -193,7 +193,7 @@ describe("herdr placement", () => {
 	it("does not manage panes of other multiplexers", async () => {
 		const herdr = fakeHerdr();
 		const placer = createHerdrPlacer({ exec: herdr.exec, env: HERDR_ENV });
-		const tmux: Placement = { kind: "tmux", handle: "%3", layout: "split", detail: "" };
+		const tmux = { kind: "tmux", handle: "%3", layout: "split", detail: "" } as unknown as Placement;
 		expect(await placer.alive(tmux)).toBeUndefined();
 		expect(await placer.focus(tmux)).toBe(false);
 		expect(await placer.close(tmux)).toBe(false);

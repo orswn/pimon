@@ -148,7 +148,7 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 
 			ctx.onSessionStart((event, extCtx) => {
 				source = spawnSource(child, extCtx, bus.launch);
-				pendingTask = startChildSession(ctx.pi, child, source, bus.launch, event);
+				pendingTask = startChildSession(ctx.pi, child, source, event);
 				rewatchChildren(host);
 				publishActive(true);
 			});

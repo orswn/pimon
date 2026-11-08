@@ -545,7 +545,6 @@ describe("statusline with the bus feature", () => {
 		await harness?.shutdown();
 		delete process.env["PI_BUS_NAME"];
 		delete process.env["PI_BUS_ROLE"];
-		delete (globalThis as Record<string, unknown>)["__piBusOwner"];
 	});
 
 	it("shows name and role after start and after a reload with no human action", async () => {
@@ -750,20 +749,16 @@ describe("statusline work counts", () => {
 });
 
 describe("statusline agents count", () => {
-	const OWNER_KEY = "__piBusOwner";
-	const globals = globalThis as Record<string, unknown>;
 	const nodes: BusNode[] = [];
 	let paths: AgentPaths;
 
 	beforeEach(() => {
-		delete globals[OWNER_KEY];
 		paths = agentPaths(join(mkdtempSync(join(tmpdir(), "statusline-agents-")), "pi-agents"));
 	});
 
 	afterEach(async () => {
 		for (const node of nodes.splice(0)) await node.stop();
 		await harness?.shutdown();
-		delete globals[OWNER_KEY];
 	});
 
 	/** Places nothing. Plays a child that reads its spawn file and joins the bus. */

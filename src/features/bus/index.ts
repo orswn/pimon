@@ -631,6 +631,7 @@ export const bus = defineFeature({
 	defaultEnabled: true,
 	configSchema,
 	setup(ctx) {
+		// Peers address this pi by its owner, so it must survive /reload. A new version of this state gives a new owner.
 		const identity = ctx.reloadState<Identity>("identity", 1, () => {
 			const launch = readLaunchEnv(process.env);
 			deleteIdentityEnv(process.env);

@@ -17,10 +17,9 @@ export type EnvelopeKind =
 
 export type Priority = "normal" | "important" | "urgent";
 
-// TODO(okka): remove when no pi runs the standalone bus extension. Old peers may still send `next-turn`.
-export type Wake = "now" | "next-turn" | "never";
+export type Wake = "now" | "never";
 
-export function normalizeWake(wake?: Wake): Exclude<Wake, "next-turn"> {
+export function normalizeWake(wake?: Wake): Wake {
 	return wake === "never" ? "never" : "now";
 }
 

@@ -118,6 +118,16 @@ describe("send and reply results", () => {
 		);
 	});
 
+	it("refuses to reply to a message whose sender has no owner", async () => {
+		const { owner: _owner, ...ownerless } = peer("asker", "a");
+		store.addInbound(envelope({ from: ownerless as PeerRecord }));
+		const calls: { to: string; corrId?: string | undefined }[] = [];
+		await expect(
+			replyAction(host(mixed, calls), { action: "reply", body: "a", messageId: "eeeeeeee" }),
+		).rejects.toThrow(/has no sender owner/);
+		expect(calls).toEqual([]);
+	});
+
 	it("keeps the question unanswered when the reply reached nobody", async () => {
 		store.addInbound(envelope());
 		const none = result({ failed: [{ instanceId: "a".repeat(32), name: "asker", reason: "gone" }] });

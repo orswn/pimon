@@ -246,5 +246,3 @@ From 1.0.0, SemVer covers these surfaces:
 - The versioned records: presence, lease, spawn file, agent record, usage cache, and history lines. Log files are not covered.
 
 Prompt text and tool descriptions can change in a minor version.
-
-Interop with the standalone bus and agents extensions is temporary. SemVer does not cover it. `PI_AGENTS_TOOLS` and `PI_AGENT_LABEL` are for this interop only.

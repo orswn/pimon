@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AnyModel, Api, Credential, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
@@ -32,10 +31,6 @@ function readDiscoveryProviders(agentDir: string): [string, ProviderJsonConfig][
 	);
 }
 
-function oldCachePath(providerId: string): string {
-	return join(homedir(), ".cache", "pi", "dynamic-models", `${providerId.replace(/[^A-Za-z0-9_-]/g, "_")}.json`);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -51,14 +46,6 @@ function readJson(path: string): unknown {
 	return JSON.parse(content.charCodeAt(0) === 0xfeff ? content.slice(1) : content);
 }
 
-function readOldCache(providerId: string): ProviderModelConfig[] | undefined {
-	try {
-		return modelList(readJson(oldCachePath(providerId)));
-	} catch {
-		return undefined;
-	}
-}
-
 // TODO(okka): drop the store-file read when pi updates the model snapshot after the offline refresh phase.
 function readStoredModels(agentDir: string, providerId: string): ProviderModelConfig[] | undefined {
 	try {
@@ -70,7 +57,7 @@ function readStoredModels(agentDir: string, providerId: string): ProviderModelCo
 	}
 }
 
-/** The list a provider shows before any refresh: pi's stored list, then the old cache. */
+/** The list a provider shows before any refresh: pi's stored list. */
 function baselineModels(
 	agentDir: string,
 	providerId: string,
@@ -78,8 +65,7 @@ function baselineModels(
 ): ProviderModelConfig[] | undefined {
 	// pi validates queued registrations after setup and rejects models without a baseUrl.
 	if (!config.baseUrl) return undefined;
-	// TODO(okka): remove the old cache read after one release.
-	return readStoredModels(agentDir, providerId) ?? readOldCache(providerId);
+	return readStoredModels(agentDir, providerId);
 }
 
 async function builtinCatalog(providerId: string): Promise<Map<string, Model<Api>>> {

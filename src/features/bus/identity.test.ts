@@ -2,17 +2,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { adoptOwner, busLabels, defaultName, deleteIdentityEnv, readLaunchEnv } from "./identity.ts";
 
 describe("bus identity", () => {
-	it("adopts the owner that the standalone bus left in the process", () => {
-		const holder: Record<string, unknown> = { __piBusOwner: "old-owner" };
-		expect(adoptOwner({ owner: "env-owner" }, holder)).toBe("old-owner");
-	});
-
-	it("uses a non-empty PI_BUS_OWNER before a new uuid, and publishes the result", () => {
-		const holder: Record<string, unknown> = {};
-		expect(adoptOwner({ owner: "env-owner" }, holder)).toBe("env-owner");
-		expect(holder["__piBusOwner"]).toBe("env-owner");
-		const fresh: Record<string, unknown> = {};
-		expect(adoptOwner({ owner: "" }, fresh)).toMatch(/^[0-9a-f-]{36}$/);
+	it("uses a non-empty PI_BUS_OWNER before a new uuid and ignores an owner left on globalThis", () => {
+		const globals = globalThis as Record<string, unknown>;
+		globals["__piBusOwner"] = "old-owner";
+		try {
+			expect(adoptOwner({ owner: "env-owner" })).toBe("env-owner");
+			expect(adoptOwner({ owner: "" })).toMatch(/^[0-9a-f-]{36}$/);
+			expect(globals["__piBusOwner"]).toBe("old-owner");
+		} finally {
+			delete globals["__piBusOwner"];
+		}
 	});
 
 	it("reads launch values once and removes identity keys from the env", () => {

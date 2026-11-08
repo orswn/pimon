@@ -122,12 +122,12 @@ describe("child records", () => {
 	});
 	afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-	it("loads an old record with a tmux placement", () => {
+	it("loads a record and skips a torn file", () => {
 		mkdirSync(paths.state, { recursive: true });
-		writeFileSync(join(paths.state, "old.json"), JSON.stringify(record("old", "tmux")));
+		writeFileSync(join(paths.state, "old.json"), JSON.stringify(record("old")));
 		writeFileSync(join(paths.state, "torn.json"), "{");
 		const records = new ChildRecords(paths);
-		expect(records.mine("me").map((entry) => entry.placement.kind)).toEqual(["tmux"]);
+		expect(records.mine("me").map((entry) => entry.spawnId)).toEqual(["old"]);
 	});
 
 	it("deletes every per-spawn file on forget", () => {
@@ -135,12 +135,10 @@ describe("child records", () => {
 		records.save(record("spawn-1"));
 		writeSpawnFile(paths, DATA);
 		writeCloseHook(paths, "spawn-1");
-		writeFileSync(join(paths.prompts, "spawn-1-role.md"), "old role file");
 		expect(statSync(join(paths.state, "spawn-1.json")).mode & 0o777).toBe(0o600);
 		records.forget("spawn-1");
 		expect(records.all()).toEqual([]);
 		expect(existsSync(spawnFilePath(paths, "spawn-1"))).toBe(false);
 		expect(existsSync(closeHookPath(paths, "spawn-1"))).toBe(false);
-		expect(existsSync(join(paths.prompts, "spawn-1-role.md"))).toBe(false);
 	});
 });

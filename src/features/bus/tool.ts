@@ -232,8 +232,9 @@ export async function sendAction(host: ActionHost, params: BusToolInput): Promis
 }
 
 function replyRecipient(envelope: Envelope): string {
-	// TODO(okka): remove when no pi runs the standalone bus extension. Very old senders carry no owner.
-	return envelope.from.owner ? `owner:${fullId(envelope.from.owner)}` : `id:${fullId(envelope.from.instanceId)}`;
+	if (!envelope.from.owner)
+		throw new Error(`Message ${shortId(envelope.id)} has no sender owner. Reply is not possible.`);
+	return `owner:${fullId(envelope.from.owner)}`;
 }
 
 export async function replyAction(host: ActionHost, params: BusToolInput): Promise<ActionResult> {

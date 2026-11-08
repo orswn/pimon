@@ -7,9 +7,6 @@ import { clearReloadState } from "../../src/core/reload-state.ts";
 import { bus, type BusService } from "../../src/features/bus/index.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
 
-const OWNER_KEY = "__piBusOwner";
-const globals = globalThis as Record<string, unknown>;
-
 let service: BusService | undefined;
 const capture = defineFeature({
 	id: "bus-capture",
@@ -32,7 +29,6 @@ async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
 describe("bus start after a failure", () => {
 	let harness: Harness | undefined;
 	beforeEach(() => {
-		delete globals[OWNER_KEY];
 		clearReloadState();
 	});
 	afterEach(async () => {
@@ -40,7 +36,6 @@ describe("bus start after a failure", () => {
 		await harness?.shutdown();
 		harness?.dispose();
 		harness = undefined;
-		delete globals[OWNER_KEY];
 		clearReloadState();
 	});
 

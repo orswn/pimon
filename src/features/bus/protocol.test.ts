@@ -6,7 +6,6 @@ const A = "aaaaaaaa-1111-4111-8111-111111111111";
 describe("bus protocol", () => {
 	it("normalizes wake values", () => {
 		expect(normalizeWake()).toBe("now");
-		expect(normalizeWake("next-turn")).toBe("now");
 		expect(normalizeWake("never")).toBe("never");
 	});
 

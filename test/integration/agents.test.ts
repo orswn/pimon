@@ -25,9 +25,6 @@ import type { Envelope } from "../../src/features/bus/protocol.ts";
 import { busDirs } from "../../src/features/bus/registry.ts";
 import { features } from "../../src/features/index.ts";
 import { createHarness, type Harness, type HarnessOptions } from "../support/harness.ts";
-
-const OWNER_KEY = "__piBusOwner";
-const globals = globalThis as Record<string, unknown>;
 const PARENT = "0123456789abcdef0123456789abcdef";
 
 let service: BusService | undefined;
@@ -86,7 +83,6 @@ describe("agents feature", () => {
 	const nodes: BusNode[] = [];
 
 	beforeEach(() => {
-		delete globals[OWNER_KEY];
 		clearReloadState();
 		root = mkdtempSync(join(tmpdir(), "agents-it-"));
 		paths = agentPaths(join(root, "pi-agents"));
@@ -103,7 +99,6 @@ describe("agents feature", () => {
 		harness?.dispose();
 		harness = undefined;
 		rmSync(root, { recursive: true, force: true });
-		delete globals[OWNER_KEY];
 		clearReloadState();
 	});
 
@@ -303,7 +298,7 @@ describe("agents feature", () => {
 	});
 
 	describe("child of an old parent", () => {
-		it("takes its identity and tools from the env and renders no delegated section", async () => {
+		it("takes its identity from the env, ignores PI_AGENTS_TOOLS, and renders no delegated section", async () => {
 			process.env["PI_BUS_NAME"] = "legacy-w";
 			process.env["PI_BUS_ROLE"] = "worker";
 			process.env["PI_BUS_PARENT"] = PARENT;
@@ -312,13 +307,13 @@ describe("agents feature", () => {
 			const h = await start();
 			expect(busService().name).toBe("legacy-w");
 			expect(busService().labels).toMatchObject({ role: "worker", parent: PARENT });
-			expect(h.session.getActiveToolNames().sort()).toEqual(["pi_bus", "read"]);
+			expect(h.session.getActiveToolNames()).toEqual(expect.arrayContaining(["pi_agents", "pi_bus", "read"]));
+			expect(process.env["PI_AGENTS_TOOLS"]).toBeUndefined();
 			h.respond([fauxAssistantMessage(fauxText("hi"))]);
 			await h.session.prompt("hi");
 			const rendered = sections(h.requests[0]);
 			expect(rendered["delegated"]).toBeUndefined();
 			expect(rendered["role"]).toBeUndefined();
-			expect(rendered["agents"]).toBeUndefined();
 		});
 	});
 

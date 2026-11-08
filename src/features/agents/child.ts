@@ -119,12 +119,9 @@ export function startChildSession(
 	pi: ExtensionAPI,
 	state: ChildState,
 	source: SpawnSource | undefined,
-	launch: Readonly<LaunchEnv>,
 	event: SessionStartEvent,
 ): string | undefined {
-	// TODO(okka): remove when no pi runs the standalone bus extension
-	const legacyTools = launch.agentsTools?.split(",").filter(Boolean);
-	const tools = source ? source.entry.child.tools : legacyTools;
+	const tools = source?.entry.child.tools;
 	if (tools && tools.length > 0) pi.setActiveTools(tools);
 	if (!state.data || state.taskSent || event.reason !== "startup") return undefined;
 	state.taskSent = true;

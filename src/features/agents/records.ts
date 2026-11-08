@@ -4,7 +4,7 @@ import type { ContextMode } from "./context.ts";
 import { closeHookPath, type Placement } from "./placement.ts";
 import { type AgentPaths, ensurePrivateDir, placedMarkerPath, spawnFilePath, writePrivateFile } from "./spawn-file.ts";
 
-/** The on-disk shape the standalone extension wrote. Old records must keep loading. */
+/** The on-disk child record. Records that earlier versions wrote must keep loading. */
 export interface ChildRecord {
 	spawnId: string;
 	name: string;
@@ -88,9 +88,6 @@ export class ChildRecords {
 			spawnFilePath(this.paths, spawnId),
 			placedMarkerPath(this.paths.spawn, spawnId),
 			closeHookPath(this.paths, spawnId),
-			// TODO(okka): remove when no pi runs the standalone bus extension
-			join(this.paths.prompts, `${spawnId}-role.md`),
-			join(this.paths.prompts, `${spawnId}-protocol.md`),
 		]) {
 			rmSync(path, { force: true });
 		}

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, rmSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -846,7 +846,7 @@ export async function killAction(
 	if (state !== "dead") cancelExpectation?.();
 	let paneClosed = false;
 	if (force !== false) {
-		if (record.placement.kind !== "herdr") notes.push(`its ${record.placement.kind} pane is not managed`);
+		if (record.placement.kind !== "herdr") notes.push(`its ${String(record.placement.kind)} pane is not managed`);
 		else {
 			paneClosed = await host.placer.close(record.placement);
 			notes.push(paneClosed ? "closed the pane" : "no pane left to close");
@@ -872,7 +872,7 @@ export async function focusAction(host: AgentsHost, agent: string | undefined): 
 			? `Focused ${record.name} in its ${record.placement.kind} pane.`
 			: record.placement.kind === "herdr"
 				? `Could not focus ${record.name}; its pane may be gone.`
-				: `Could not focus ${record.name}; its ${record.placement.kind} pane is not managed.`,
+				: `Could not focus ${record.name}; its ${String(record.placement.kind)} pane is not managed.`,
 		details: { ok },
 		ok,
 	};
@@ -922,6 +922,4 @@ export function pruneFiles(paths: AgentPaths, keepRoleKey: string): void {
 	const recorded = new Set(new ChildRecords(paths).all().map((record) => record.spawnId));
 	pruneOld(paths.prompts, undefined, (entry) => recorded.has(entry.replace(/-herdr-close\.ts$/, "")));
 	pruneOld(paths.spawn);
-	// TODO(okka): remove when no pi runs the standalone bus extension
-	pruneOld(join(paths.root, "launchers"));
 }

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import type { BusService } from "../bus/index.ts";
 import type { PeerRecord, SendResult } from "../bus/protocol.ts";
 import { pidBirth } from "../bus/registry.ts";
-import { OUTSIDE_HERDR, type PlacementRequest, type Placer } from "./placement.ts";
+import { OUTSIDE_HERDR, type Placement, type PlacementRequest, type Placer } from "./placement.ts";
 import { type ChildRecord, ChildRecords } from "./records.ts";
 import { type AgentPaths, agentPaths, type SpawnFile, takeSpawnFile } from "./spawn-file.ts";
 import {
@@ -340,6 +340,7 @@ describe("roles", () => {
 });
 
 describe("child lifecycle", () => {
+	const tmuxPane = { kind: "tmux", handle: "%1", layout: "split", detail: "" } as unknown as Placement;
 	let root: string;
 	beforeEach(() => {
 		root = mkdtempSync(join(tmpdir(), "agents-"));
@@ -348,7 +349,7 @@ describe("child lifecycle", () => {
 
 	it("reports an unknown process state and keeps the record when no pid is known and the pane stays", async () => {
 		const h = setup(root);
-		storedRecord(h, { placement: { kind: "tmux", handle: "%1", layout: "split", detail: "" } });
+		storedRecord(h, { placement: tmuxPane });
 		const result = await killAction(h.host, "worker", true);
 		expect(result.text).toContain("no pid was recorded: process state unknown");
 		expect(result.text).toContain("its tmux pane is not managed");
@@ -418,7 +419,7 @@ describe("child lifecycle", () => {
 
 	it("closes an old tmux child over the bus and says the pane is not managed when it is gone", async () => {
 		const h = setup(root);
-		storedRecord(h, { placement: { kind: "tmux", handle: "%1", layout: "split", detail: "" }, pid: process.pid });
+		storedRecord(h, { placement: tmuxPane, pid: process.pid });
 		const result = await closeAction(h.host, "worker");
 		expect(result.text).toBe(
 			"worker is not on the bus. Its tmux pane is not managed; the record stays for manual resolution.",
@@ -563,11 +564,11 @@ describe("child lifecycle", () => {
 		expect((await focusAction(h.host, undefined)).text).toBe(`Focused ${h.peers[0]?.name} in its herdr pane.`);
 		h.open.clear();
 		expect((await focusAction(h.host, undefined)).text).toContain("its pane may be gone");
-		storedRecord(h, { name: "old", placement: { kind: "tmux", handle: "%1", layout: "split", detail: "" } });
+		storedRecord(h, { name: "old", placement: tmuxPane });
 		expect((await focusAction(h.host, "old")).text).toBe("Could not focus old; its tmux pane is not managed.");
 	});
 
-	it("prunes old launchers and spawn files but keeps the close hook of a recorded child", async () => {
+	it("prunes old prompt and spawn files, keeps the close hook of a recorded child, and leaves launchers", async () => {
 		const h = setup(root);
 		const recorded = storedRecord(h);
 		const launchers = join(h.paths.root, "launchers");
@@ -578,6 +579,7 @@ describe("child lifecycle", () => {
 			launcher: join(launchers, "old.sh"),
 			keptHook: join(h.paths.prompts, `${recorded.spawnId}-herdr-close.ts`),
 			oldHook: join(h.paths.prompts, "gone-spawn-herdr-close.ts"),
+			oldRole: join(h.paths.prompts, `${recorded.spawnId}-role.md`),
 			spawn: join(h.paths.spawn, "gone-spawn.json"),
 		};
 		const dayAgo = (Date.now() - 25 * 60 * 60_000) / 1000;
@@ -586,8 +588,9 @@ describe("child lifecycle", () => {
 			utimesSync(file, dayAgo, dayAgo);
 		}
 		pruneFiles(h.paths, "sess");
-		expect(existsSync(files.launcher)).toBe(false);
+		expect(existsSync(files.launcher)).toBe(true);
 		expect(existsSync(files.oldHook)).toBe(false);
+		expect(existsSync(files.oldRole)).toBe(false);
 		expect(existsSync(files.spawn)).toBe(false);
 		expect(existsSync(files.keptHook)).toBe(true);
 	});

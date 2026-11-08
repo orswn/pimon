@@ -2,10 +2,9 @@ import { join } from "node:path";
 import type { ExecFn } from "../../core/exec.ts";
 import { type AgentPaths, ensurePrivateDir, writePrivateFile } from "./spawn-file.ts";
 
-/** Old state files can still name tmux, kitty, or terminal. Only Herdr panes are managed. */
+/** Only Herdr panes are managed. A record file from another source can name another kind. */
 export interface Placement {
-	// TODO(okka): remove when no pi runs the standalone bus extension
-	kind: "herdr" | "tmux" | "kitty" | "terminal";
+	kind: "herdr";
 	handle: string;
 	handleBirth?: string | undefined;
 	tabId?: string | undefined;

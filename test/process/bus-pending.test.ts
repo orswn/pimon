@@ -69,13 +69,6 @@ describe("pending question resolution", () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	it("normalizes a legacy next-turn wake before transport", async () => {
-		const seen = answererEnvelopes().length;
-		await asker.send("name:answerer", { body: "legacy wake", wake: "next-turn" });
-		await until(() => answererEnvelopes().length > seen);
-		expect(answererEnvelopes().at(-1)?.payload["wake"]).toBe("now");
-	});
-
 	it("resolves an answer that carries corrId", async () => {
 		const result = await asker.send("name:answerer", { body: "Q1 with corrId", kind: "question", replyExpected: true });
 		expect(result.delivered.map((peer) => peer.name)).toEqual(["answerer"]);
