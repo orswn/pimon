@@ -7,6 +7,7 @@ import {
 	formatSeconds,
 	MATCH_BUDGET,
 	matchDigest,
+	matchLabel,
 	renderBlock,
 } from "./digest.ts";
 
@@ -119,6 +120,13 @@ describe("matchDigest and renderBlock", () => {
 		const base = { name: "pr", matchSource: "failed", lines: ["x failed"], totalMatched: 1, logFile: "/tmp/z.log" };
 		expect(matchDigest(base)).not.toContain("Command:");
 		expect(matchDigest({ ...base, command: "gh pr checks" }).split("\n")[1]).toBe("Command: gh pr checks");
+	});
+
+	it("labels the pattern with the same mode words as the monitor options", () => {
+		expect(matchLabel({ mode: "literal", matchSource: "hit", ignoreCase: false })).toBe('"hit" (literal)');
+		expect(matchLabel({ mode: "literal", matchSource: "hit", ignoreCase: true })).toBe('"hit" (literal, ignoreCase)');
+		expect(matchLabel({ mode: "regex", matchSource: "a.b", ignoreCase: true })).toBe('"a.b" (regex, ignoreCase)');
+		expect(matchLabel({ mode: "any", matchSource: "", ignoreCase: true })).toBe("every line");
 	});
 
 	it("renderBlock reports no output", () => {

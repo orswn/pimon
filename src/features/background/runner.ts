@@ -3,13 +3,21 @@
 // identity says the process is gone.
 import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
-import { exitDigest, formatDuration, formatSeconds, MATCH_BUDGET, matchDigest, renderBlock } from "./digest.ts";
+import {
+	exitDigest,
+	formatDuration,
+	formatSeconds,
+	MATCH_BUDGET,
+	matchDigest,
+	matchLabel,
+	renderBlock,
+} from "./digest.ts";
 import { captureIdentity, captureOwner, type JobIdentity, type Liveness, verifyGroup } from "./identity.ts";
 import { deleteLease, type Lease, leaseDir, writeLease } from "./leases.ts";
 import { LineSplitter } from "./lines.ts";
 import { LogSink } from "./logsink.ts";
 import { createMatcher, type Matcher } from "./matcher.ts";
-import { type JobOptions, LIMITS, type MonitorEdit, type MonitorOptions, type StreamName } from "./options.ts";
+import { type JobOptions, LIMITS, type MonitorEdit, type StreamName } from "./options.ts";
 import {
 	activeJobs,
 	addJob,
@@ -258,18 +266,13 @@ export function flush(reg: Registry, state: JobState): void {
 		matchDigest({
 			name: options.name,
 			command: options.generatedName ? options.command : undefined,
-			matchSource: patternLabel(options),
+			matchSource: matchLabel(options),
 			lines: batch,
 			totalMatched: total,
 			logFile: state.sink.path,
 		}),
 	);
 	if (options.once) void stopJob(reg, state, "matched once", { reportUnkillable: true, normal: true });
-}
-
-function patternLabel(options: MonitorOptions): string {
-	if (options.mode === "any") return "every line";
-	return `${JSON.stringify(options.matchSource)} (${options.mode})`;
 }
 
 // The batch that tripped the limit goes into the notice, so no matched line vanishes unreported.
@@ -288,7 +291,7 @@ function mute(reg: Registry, state: JobState, reason: string, batch: readonly st
 			state,
 			[
 				`Monitor "${options.name}" ${reason} for the ${state.muteCycles}th time and is now muted permanently.`,
-				`Pattern: ${patternLabel(options)}`,
+				`Pattern: ${matchLabel(options)}`,
 				...matched,
 				"The process is still running and still logging. Nothing was killed.",
 				`Narrow it with monitor action=edit name=${options.name} match=..., or read ${state.sink.path}.`,
@@ -304,7 +307,7 @@ function mute(reg: Registry, state: JobState, reason: string, batch: readonly st
 		state,
 		[
 			`Monitor "${options.name}" ${reason} and is muted for ${formatDuration(cooldown)}.`,
-			`Pattern: ${patternLabel(options)}`,
+			`Pattern: ${matchLabel(options)}`,
 			...matched,
 			"The process is still running and still logging. Nothing was killed.",
 			`It resumes on its own. ${LIMITS.muteCycleMax - state.muteCycles} more flood(s) make the mute permanent.`,
@@ -325,7 +328,7 @@ function muteForever(reg: Registry, state: JobState, reason: string): void {
 		state,
 		[
 			`Monitor "${options.name}" stopped matching: ${reason}.`,
-			`Pattern: ${patternLabel(options)}`,
+			`Pattern: ${matchLabel(options)}`,
 			"The process is still running and still logging. Only matching is disabled.",
 			`Fix the pattern with monitor action=edit name=${options.name}, or read ${state.sink.path}.`,
 		].join("\n"),

@@ -253,6 +253,14 @@ describe("monitor matching", () => {
 		expect(emitsFor(options.name).some((text) => text.includes("ended"))).toBe(true);
 	});
 
+	it("names ignoreCase in the pattern line of the match wake", async () => {
+		const options = monitor({ command: "echo 'Error one'; sleep 0.3", matchSource: "ERROR", ignoreCase: true });
+		const state = start(options);
+		await exited(state);
+		const wake = emitsFor(options.name).find((text) => text.includes("matched")) ?? "";
+		expect(wake.split("\n")).toContain('Pattern: "ERROR" (literal, ignoreCase)');
+	});
+
 	it("matches a 1200-char line that ends in DONE", async () => {
 		const options = monitor({ command: "printf '%01200d DONE\\n' 0; sleep 0.5", matchSource: "DONE" });
 		const state = start(options);

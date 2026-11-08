@@ -4,6 +4,7 @@ import type { JobIdentity, Liveness } from "./identity.ts";
 import type { Lease } from "./leases.ts";
 import type { LogSink } from "./logsink.ts";
 import type { Matcher } from "./matcher.ts";
+import { matchLabel } from "./digest.ts";
 import { LIMITS, type JobOptions, type Kind, type MonitorOptions } from "./options.ts";
 
 /** A codemode script job. It has no OS process, no pid, and no lease. */
@@ -225,14 +226,9 @@ export function phaseOf(state: JobState): string {
 	return "running";
 }
 
-/** Mode is always shown: a literal and a regex with the same text behave differently. */
 export function describeOptions(options: JobOptions): string {
 	if (options.kind === "background") {
 		return `timeoutMs=${options.timeoutMs}; notifyExit=${options.notifyExit}`;
 	}
-	const match =
-		options.mode === "any"
-			? "every line"
-			: `${JSON.stringify(options.matchSource)} (${options.mode}${options.ignoreCase ? ", ignoreCase" : ""})`;
-	return `match=${match}; streams=${[...(options.streams ?? [])].join(",")}; once=${options.once}; debounceMs=${options.debounceMs}; maxPerMinute=${options.maxPerMinute}; timeoutMs=${options.timeoutMs}`;
+	return `match=${matchLabel(options)}; streams=${[...(options.streams ?? [])].join(",")}; once=${options.once}; debounceMs=${options.debounceMs}; maxPerMinute=${options.maxPerMinute}; timeoutMs=${options.timeoutMs}`;
 }

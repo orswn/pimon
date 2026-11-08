@@ -1,4 +1,5 @@
 import { clampText } from "./lines.ts";
+import type { JobOptions } from "./options.ts";
 
 export interface Budget {
 	maxLines: number;
@@ -86,6 +87,12 @@ export function scriptExitDigest(info: ScriptExitInfo): string {
 		...renderBlock(info.tail, SCRIPT_EXIT_BUDGET, info.totalLines),
 		`Full log: ${info.logFile}`,
 	].join("\n");
+}
+
+/** Mode is always shown: a literal and a regex with the same text behave differently. */
+export function matchLabel(options: Pick<JobOptions, "mode" | "matchSource" | "ignoreCase">): string {
+	if (options.mode === "any") return "every line";
+	return `${JSON.stringify(options.matchSource)} (${options.mode}${options.ignoreCase ? ", ignoreCase" : ""})`;
 }
 
 interface MatchInfo {

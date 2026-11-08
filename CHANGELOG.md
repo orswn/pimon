@@ -15,6 +15,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - The bus state after a compaction no longer lists questions from peers that left.
 - `background` and `monitor` status and logs find the newest log with the same name from another or an earlier pi process.
 - A monitor that `once` stops after its first match shows `stopped (matched once)`, not a signal or `aborted`.
+- The match wake and the mute notices of a monitor name `ignoreCase` like its status does.
 
 ## [1.0.0] - 2026-11-08
 
