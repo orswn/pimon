@@ -286,7 +286,10 @@ describe("statusline footer", () => {
 		await s.settle();
 		expect(usage.urls).toHaveLength(1);
 		now += 1;
-		await s.checked();
+		s.line();
+		// checked() can return early here: the first cache file already exists, and a git status result also renders.
+		const deadline = Date.now() + 5_000;
+		while (usage.urls.length < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
 		expect(usage.urls).toHaveLength(2);
 	});
 
