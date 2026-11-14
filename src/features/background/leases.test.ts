@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
@@ -20,7 +20,8 @@ const complete = {
 };
 
 describe("lease files", () => {
-	const dir = join(root, "leases");
+	// Each test gets its own lease dir path. The dir does not exist yet.
+	const newDir = () => join(mkdtempSync(join(root, "case-")), "leases");
 	const identity = captureIdentity(process.pid);
 	if (!identity) throw new Error("no /proc identity");
 	const lease: Lease = {
@@ -35,6 +36,7 @@ describe("lease files", () => {
 	};
 
 	it("writes a lease, leaves no temp file, and reads it back", () => {
+		const dir = newDir();
 		const file = writeLease(lease, dir);
 		expect(file !== undefined && existsSync(file)).toBe(true);
 		expect(readdirSync(dir).every((entry) => !entry.endsWith(".tmp"))).toBe(true);
@@ -48,6 +50,8 @@ describe("lease files", () => {
 	});
 
 	it("reports malformed and partial leases and never deletes them", () => {
+		const dir = newDir();
+		mkdirSync(dir);
 		writeFileSync(join(dir, "broken.json"), "{ not json");
 		writeFileSync(join(dir, "halfwritten.json"), JSON.stringify({ version: 1, name: "x" }));
 		writeFileSync(join(dir, "nopgid.json"), JSON.stringify({ ...complete, identity: { pid: 5, startTicks: 9 } }));
@@ -62,6 +66,8 @@ describe("lease files", () => {
 	});
 
 	it("prunes only stale temp files", () => {
+		const dir = newDir();
+		mkdirSync(dir);
 		writeFileSync(join(dir, "stale.tmp"), "x");
 		expect(pruneTempLeases(dir, 60_000)).toBe(0);
 		expect(pruneTempLeases(dir, -1)).toBeGreaterThanOrEqual(1);
