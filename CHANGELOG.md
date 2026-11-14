@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Fixed
+
+- The hub image carries the `org.opencontainers.image.source` label, so GitHub links the `ghcr.io/orswn/pimon-hub` package to this repository.
+
 ## [1.7.0] - 2026-11-14
 
 ### Added

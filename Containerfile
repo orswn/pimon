@@ -1,6 +1,10 @@
 # pimon-hub: the A2A hub. Build: podman build --format docker -f Containerfile -t pimon-hub .
 FROM docker.io/library/node:24-slim@sha256:0e2646ab57e77b7a384a0cb59b6815b182c77e1f9c3ba36bd8435bd9c4e6680e
 
+# GitHub links the ghcr.io package to this repository through the source label, so the workflow token may push it.
+LABEL org.opencontainers.image.source="https://github.com/orswn/pimon" \
+	org.opencontainers.image.description="pimon-hub: A2A message hub for pi sessions"
+
 WORKDIR /app
 ENV NODE_ENV=production \
 	NODE_OPTIONS=--disable-warning=ExperimentalWarning \
