@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import { sessionTag } from "./identity.ts";
 import type { AgentInfo } from "./protocol.ts";
-import { isUnicastSelector, matchAgents, parseSelector, reachesOffline, SelectorError } from "./selectors.ts";
+import {
+	describeSelector,
+	isUnicastSelector,
+	matchAgents,
+	parseSelector,
+	reachesOffline,
+	SelectorError,
+} from "./selectors.ts";
 
 function idOf(name: string): string {
 	return (
@@ -76,6 +83,11 @@ describe("selector parsing", () => {
 		expect(() => parseSelector("id:12")).toThrow(/8 to 32 hex/);
 		expect(() => parseSelector("owner:hermes")).toThrow(SelectorError);
 		expect(() => parseSelector("!!all")).toThrow(/repeated negation/);
+	});
+
+	it("shows an exact agent id as the model wrote it", () => {
+		expect(describeSelector("id:hermes")).toBe("id:hermes");
+		expect(describeSelector("name:mars|id:hermes")).toBe("name:mars or id:hermes");
 	});
 });
 

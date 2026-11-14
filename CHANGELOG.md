@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Fixed
+
+- `pi_bus` send and reply results show an exact agent id as written, such as `id:hermes`, not `id:=hermes`.
+
 ## [2.0.0] - 2026-11-14
 
 ### Changed

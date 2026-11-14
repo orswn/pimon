@@ -209,12 +209,16 @@ export function isUnicastSelector(selector: string): boolean {
 	return (groups[0] ?? []).some((token) => !token.negated && (token.kind === "name" || token.kind === "id"));
 }
 
+function shownValue(token: { kind: string; value: string }): string {
+	return token.kind === "id" && token.value.startsWith("=") ? token.value.slice(1) : token.value;
+}
+
 export function describeSelector(selector: string): string {
 	try {
 		return parseSelector(selector)
 			.map((group) =>
 				group
-					.map((token) => `${token.negated ? "!" : ""}${token.kind}${token.value ? `:${token.value}` : ""}`)
+					.map((token) => `${token.negated ? "!" : ""}${token.kind}${token.value ? `:${shownValue(token)}` : ""}`)
 					.join("+"),
 			)
 			.join(" or ");
