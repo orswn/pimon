@@ -34,7 +34,12 @@ export default defineConfig({
 			},
 			{
 				extends: true,
-				test: { name: "process", include: ["test/process/**/*.test.ts"], testTimeout: 60_000, ...sandboxed },
+				test: {
+					name: "process",
+					include: ["test/process/**/*.test.ts", "test/contract/**/*.test.ts"],
+					testTimeout: 60_000,
+					...sandboxed,
+				},
 			},
 			{ extends: true, test: { name: "e2e", include: ["test/e2e/**/*.test.ts"], testTimeout: 600_000 } },
 		],

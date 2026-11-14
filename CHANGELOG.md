@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- The hub link API has a JSON Schema, `schema/hub-protocol-v2.json`, versioned by the hub protocol number. `npm run schema` writes it. Black-box contract tests check every link route, link event, and main error of a running hub against it. Set `HUB_BIN` to run them against another hub binary.
+
 ## [2.0.1] - 2026-11-14
 
 ### Fixed

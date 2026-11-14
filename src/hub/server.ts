@@ -13,9 +13,22 @@ import { type AgentRow, type Caller, Engine, HubError } from "./engine.ts";
 import { type ExternalAgentConfig, loadExternal } from "./external.ts";
 import { ExternalGateway, type GatewayOptions } from "./gateway.ts";
 import { LinkHub } from "./link.ts";
-import { AGENT_HEADER } from "./protocol.ts";
+import {
+	type AckResult,
+	AGENT_HEADER,
+	type AgentsResult,
+	type ErrorBody,
+	type Health,
+	type InboxResult,
+	type OkResult,
+	type ReadResult,
+	type StatusResult,
+	type TopicsResult,
+	type UpdatedTaskResult,
+} from "./protocol.ts";
 import { PushSender, type PushOptions } from "./push.ts";
 import { PushGuard, TEST_AGENT_ALLOW } from "./push-guard.ts";
+import { matchRoute, type RouteKey } from "./routes.ts";
 import { type BuiltinAgent, installBuiltins } from "./test-agents.ts";
 
 export const BODY_LIMIT = 1024 * 1024;
@@ -23,6 +36,17 @@ const SWEEP_MS = 24 * 60 * 60 * 1000;
 const CARD_MAX_AGE_S = 60;
 const AMBIGUOUS_ALIAS = -32602;
 const JSON_TYPES = new Set(["application/json", "application/a2a+json"]);
+const ROOT_ROUTES = [
+	"GET /healthz",
+	"GET /agents",
+	"GET /agents/:id",
+	"POST /link/register",
+] as const satisfies RouteKey[];
+type AgentRouteKey = Exclude<RouteKey, (typeof ROOT_ROUTES)[number]>;
+
+function isAgentRoute(route: RouteKey | undefined): route is AgentRouteKey {
+	return route !== undefined && !(ROOT_ROUTES as readonly RouteKey[]).includes(route);
+}
 
 export const HUB_VERSION: string = (() => {
 	try {
@@ -163,11 +187,11 @@ function sendError(res: ServerResponse, error: unknown, log: (line: string) => v
 		return;
 	}
 	if (error instanceof HubError || error instanceof HttpError) {
-		sendJson(res, error.status, { error: error.message, ...error.details });
+		sendJson(res, error.status, { error: error.message, ...error.details } satisfies ErrorBody);
 		return;
 	}
 	log(`internal error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-	sendJson(res, 500, { error: "internal error" });
+	sendJson(res, 500, { error: "internal error" } satisfies ErrorBody);
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -308,9 +332,14 @@ export class Hub {
 		}
 		const method = req.method ?? "GET";
 		const [root, ...rest] = path;
+		const route = matchRoute(method, path);
 
-		if (root === "healthz" && rest.length === 0 && method === "GET") {
-			sendJson(res, 200, { ok: true, version: HUB_VERSION, agents: this.engine.onlineCount() });
+		if (route === "GET /healthz") {
+			sendJson(res, 200, {
+				ok: true,
+				version: HUB_VERSION,
+				agents: this.engine.onlineCount(),
+			} satisfies Health);
 			return;
 		}
 		if (root === "a2a" && rest[0]) {
@@ -328,16 +357,18 @@ export class Hub {
 			throw new HttpError(404, "not found");
 		}
 		if (root === "link") {
-			await this.#linkRoute(req, res, url, method, rest);
+			await this.#linkRoute(req, res, url, route, rest);
 			return;
 		}
-		if (root === "agents" && method === "GET" && rest.length <= 1) {
+		if (route === "GET /agents" || route === "GET /agents/:id") {
 			this.#requireHost(req);
-			if (rest[0]) {
-				sendJson(res, 200, this.engine.agentInfo(this.engine.requireAgent(rest[0])));
+			if (route === "GET /agents/:id") {
+				sendJson(res, 200, this.engine.agentInfo(this.engine.requireAgent(rest[0] ?? "")));
 				return;
 			}
-			sendJson(res, 200, { agents: this.engine.listAgents(url.searchParams.get("offline") === "1") });
+			sendJson(res, 200, {
+				agents: this.engine.listAgents(url.searchParams.get("offline") === "1"),
+			} satisfies AgentsResult);
 			return;
 		}
 		throw new HttpError(404, "not found");
@@ -527,87 +558,97 @@ export class Hub {
 
 	// ---------- link ----------
 
-	async #linkRoute(req: IncomingMessage, res: ServerResponse, url: URL, method: string, rest: string[]): Promise<void> {
+	async #linkRoute(
+		req: IncomingMessage,
+		res: ServerResponse,
+		url: URL,
+		route: RouteKey | undefined,
+		rest: string[],
+	): Promise<void> {
 		const principal = this.#requireHost(req);
-		if (rest.length === 1 && rest[0] === "register" && method === "POST") {
+		if (route === "POST /link/register") {
 			const body = await readJson(req);
 			sendJson(res, 200, this.engine.register(principal, body as never));
 			return;
 		}
-		const [agentId, action, arg, ...extra] = rest;
+		const [agentId, , arg, ...extra] = rest;
 		if (!agentId || extra.length > 0) throw new HttpError(404, "not found");
 		this.engine.requireOwnAgent(principal, agentId);
-		const route = `${method} ${action ?? ""}${arg === undefined ? "" : " *"}`;
+		if (!isAgentRoute(route)) throw new HttpError(404, "not found");
 		switch (route) {
-			case "GET events":
+			case "GET /link/:agent/events":
 				this.link.open(agentId, req, res, lastEventId(req, url));
 				return;
-			case "DELETE ":
+			case "DELETE /link/:agent":
 				this.link.offlineNow(agentId);
-				sendJson(res, 200, { ok: true });
+				sendJson(res, 200, { ok: true } satisfies OkResult);
 				return;
-			case "POST ack": {
+			case "POST /link/:agent/ack": {
 				const body = await readJson(req);
-				sendJson(res, 200, { acked: this.engine.ack(agentId, body["upTo"]) });
+				sendJson(res, 200, { acked: this.engine.ack(agentId, body["upTo"]) } satisfies AckResult);
 				return;
 			}
-			case "POST state": {
+			case "POST /link/:agent/state": {
 				const body = await readJson(req);
 				this.engine.setState(agentId, body["state"], body["activity"]);
-				sendJson(res, 200, { ok: true });
+				sendJson(res, 200, { ok: true } satisfies OkResult);
 				return;
 			}
-			case "POST status": {
+			case "POST /link/:agent/status": {
 				const body = await readJson(req);
-				sendJson(res, 200, { text: this.engine.setStatus(agentId, body["text"]) });
+				sendJson(res, 200, { text: this.engine.setStatus(agentId, body["text"]) } satisfies StatusResult);
 				return;
 			}
-			case "POST tasks *": {
+			case "POST /link/:agent/tasks/:taskId": {
 				const body = await readJson(req);
-				sendJson(res, 200, this.engine.linkUpdate(agentId, arg ?? "", body as never));
+				sendJson(res, 200, this.engine.linkUpdate(agentId, arg ?? "", body as never) satisfies UpdatedTaskResult);
 				return;
 			}
-			case "POST topics": {
+			case "POST /link/:agent/topics": {
 				const body = await readJson(req);
-				sendJson(res, 200, { topics: this.engine.setTopics(agentId, body["subscribe"], body["unsubscribe"]) });
+				sendJson(res, 200, {
+					topics: this.engine.setTopics(agentId, body["subscribe"], body["unsubscribe"]),
+				} satisfies TopicsResult);
 				return;
 			}
-			case "POST control": {
+			case "POST /link/:agent/control": {
 				const body = await readJson(req);
 				this.engine.control(agentId, body["target"], body["action"]);
-				sendJson(res, 200, { ok: true });
+				sendJson(res, 200, { ok: true } satisfies OkResult);
 				return;
 			}
-			case "GET inbox": {
+			case "GET /link/:agent/inbox": {
 				const unread = url.searchParams.get("unread") === "1";
 				const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 20) || 20, 1), 200);
-				sendJson(res, 200, { messages: this.engine.inbox(agentId, unread, limit) });
+				sendJson(res, 200, { messages: this.engine.inbox(agentId, unread, limit) } satisfies InboxResult);
 				return;
 			}
-			case "POST read": {
+			case "POST /link/:agent/read": {
 				const body = await readJson(req);
-				sendJson(res, 200, { read: this.engine.markRead(agentId, body["ids"]) });
+				sendJson(res, 200, { read: this.engine.markRead(agentId, body["ids"]) } satisfies ReadResult);
 				return;
 			}
-			case "GET message *":
+			case "GET /link/:agent/message/:idOrPrefix":
 				sendJson(res, 200, this.engine.message(agentId, arg ?? ""));
 				return;
-			case "GET pending":
+			case "GET /link/:agent/pending":
 				sendJson(res, 200, this.engine.pending(agentId));
 				return;
-			case "GET owed":
+			case "GET /link/:agent/owed":
 				sendJson(res, 200, this.engine.owed(agentId));
 				return;
-			case "GET thread *":
+			case "GET /link/:agent/thread/:contextOrPrefix":
 				sendJson(res, 200, this.engine.thread(agentId, arg ?? ""));
 				return;
-			case "POST children": {
+			case "POST /link/:agent/children": {
 				const body = await readJson(req);
 				sendJson(res, 200, this.engine.addChild(principal, agentId, body as never));
 				return;
 			}
-			default:
-				throw new HttpError(404, "not found");
+			default: {
+				const unhandled: never = route;
+				throw new Error(`no handler for route ${String(unhandled)}`);
+			}
 		}
 	}
 }

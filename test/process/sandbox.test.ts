@@ -2,11 +2,18 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { describe, expect, it } from "vite-plus/test";
-import { ISOLATED_ENV_KEYS, ISOLATED_ENV_PREFIXES, scrubEnv, STUBBED_COMMANDS } from "../support/sandbox.ts";
+import {
+	ISOLATED_ENV_KEYS,
+	ISOLATED_ENV_PREFIXES,
+	KEPT_ENV_KEYS,
+	scrubEnv,
+	STUBBED_COMMANDS,
+} from "../support/sandbox.ts";
 
 const isolated = (key: string) =>
-	ISOLATED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
-	(ISOLATED_ENV_KEYS as readonly string[]).includes(key);
+	!(KEPT_ENV_KEYS as readonly string[]).includes(key) &&
+	(ISOLATED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix)) ||
+		(ISOLATED_ENV_KEYS as readonly string[]).includes(key));
 
 const sandbox = process.env["PIMON_TEST_SANDBOX"] ?? "";
 
@@ -33,6 +40,12 @@ describe("test sandbox", () => {
 		for (const prefix of ISOLATED_ENV_PREFIXES) env[`${prefix}FAKE`] = "fake";
 		scrubEnv(env);
 		expect(env).toEqual({ HOME: "/home/kept", PATH: "/bin" });
+	});
+
+	it("keeps the hub binary under test", () => {
+		const env: NodeJS.ProcessEnv = { HUB_BIN: "/opt/hub", HUB_TOKENS_FILE: "/tokens" };
+		scrubEnv(env);
+		expect(env).toEqual({ HUB_BIN: "/opt/hub" });
 	});
 
 	it("scrubs the X11 and Wayland display", () => {

@@ -34,8 +34,12 @@ export const ISOLATED_ENV_KEYS = [
 	"WAYLAND_DISPLAY",
 ] as const;
 
+/** `HUB_BIN` picks the hub binary under test. It reaches no human. */
+export const KEPT_ENV_KEYS = ["HUB_BIN"] as const;
+
 export function scrubEnv(env: NodeJS.ProcessEnv): void {
 	for (const key of Object.keys(env)) {
+		if ((KEPT_ENV_KEYS as readonly string[]).includes(key)) continue;
 		if (ISOLATED_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))) delete env[key];
 	}
 	for (const key of ISOLATED_ENV_KEYS) delete env[key];

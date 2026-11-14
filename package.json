@@ -27,7 +27,8 @@
 		"test:unit": "vp test run --project unit",
 		"test:e2e": "vp test run --project e2e",
 		"test:watch": "vp test --project unit",
-		"verify": "npm run check && npm run typecheck && npm test"
+		"verify": "npm run check && npm run typecheck && npm test",
+		"schema": "node scripts/hub-schema.ts"
 	},
 	"dependencies": {
 		"@a2a-js/sdk": "1.3.0",

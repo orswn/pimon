@@ -1,8 +1,34 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
 import { startHub } from "../../src/hub/server.ts";
+import { startHubProcess, tempDir } from "../support/hub.ts";
+
+// The hub image installs no peer dependencies, so the hub must not load typebox at run time.
+const NO_TYPEBOX = `import { registerHooks } from "node:module";
+registerHooks({
+	resolve(specifier, context, next) {
+		if (specifier === "typebox" || specifier.startsWith("typebox/")) throw new Error("the hub loaded " + specifier);
+		return next(specifier, context);
+	},
+});`;
 
 describe("startHub", () => {
+	it("starts the hub process without the typebox package", async () => {
+		const tmp = tempDir("hub-no-typebox-");
+		const hub = await startHubProcess({
+			dataDir: `${tmp.dir}/data`,
+			testAgents: true,
+			env: { NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(NO_TYPEBOX)}` },
+		});
+		try {
+			expect((await fetch(`${hub.url}/healthz`)).status).toBe(200);
+			expect(hub.stderr()).not.toContain("typebox");
+		} finally {
+			await hub.stop();
+			tmp.dispose();
+		}
+	});
+
 	it("runs on an in-memory database with inline tokens and closes cleanly", async () => {
 		const sha256 = createHash("sha256").update("secret").digest("hex");
 		const hub = await startHub({ dataDir: ":memory:", tokens: { mars: { kind: "host", sha256 } }, log: () => {} });

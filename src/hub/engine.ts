@@ -17,6 +17,7 @@ import {
 	type LinkEventType,
 	type LinkPostState,
 	type LinkTaskState,
+	type MessageCandidatesErrorBody,
 	type PendingResult,
 	type PresenceEvent,
 	type Priority,
@@ -26,7 +27,9 @@ import {
 	STATUS_TEXT_MAX,
 	TASK_KINDS,
 	type TaskUpdateBody,
+	type ThreadCandidatesErrorBody,
 	type ThreadResult,
+	type UpgradeErrorBody,
 	type Wake,
 } from "./protocol.ts";
 import { PushGuard } from "./push-guard.ts";
@@ -782,7 +785,9 @@ export class Engine {
 	register(principal: Principal, body: RegisterBody): RegisterResult {
 		if (principal.kind !== "host") throw new HubError("forbidden", "only host principals may register agents");
 		if (body.protocol !== HUB_PROTOCOL) {
-			throw new HubError("upgrade", `hub protocol ${HUB_PROTOCOL} required`, { expected: HUB_PROTOCOL });
+			throw new HubError("upgrade", `hub protocol ${HUB_PROTOCOL} required`, {
+				expected: HUB_PROTOCOL,
+			} satisfies Omit<UpgradeErrorBody, "error">);
 		}
 		const id = requireString(body.agent, "agent", 128);
 		if (!AGENT_ID.test(id)) throw new HubError("invalid", "agent id has invalid characters");
@@ -2023,7 +2028,7 @@ export class Engine {
 					from: row.sender_agent ?? row.sender_name,
 					createdAt: row.created_at,
 				})),
-			});
+			} satisfies Omit<MessageCandidatesErrorBody, "error">);
 		}
 		return this.#inboxItem(only, agentId);
 	}
@@ -2047,7 +2052,7 @@ export class Engine {
 		if (matches.length > 1) {
 			throw new HubError("conflict", `context id ${contextOrPrefix} is ambiguous`, {
 				candidates: matches.map((row) => ({ contextId: row.context_id, messages: row.n, lastAt: row.last })),
-			});
+			} satisfies Omit<ThreadCandidatesErrorBody, "error">);
 		}
 		const messages = this.#all<MessageItemRow>(
 			`${Engine.#MESSAGE_SELECT} WHERE (m.agent_id = ? OR m.sender_agent = ?) AND m.context_id = ? ORDER BY m.seq`,
