@@ -2,10 +2,11 @@ import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { ContextMode } from "./context.ts";
 import { closeHookPath, type Placement } from "./placement.ts";
-import { type AgentPaths, ensurePrivateDir, placedMarkerPath, spawnFilePath, writePrivateFile } from "./spawn-file.ts";
+import { type AgentPaths, ensurePrivateDir, pidFilePath, spawnFilePath, writePrivateFile } from "./spawn-file.ts";
 
 /** The on-disk child record. Records that earlier versions wrote must keep loading. */
 export interface ChildRecord {
+	/** The child's session id. Earlier versions used a separate spawn id. */
 	spawnId: string;
 	name: string;
 	role: string;
@@ -13,15 +14,13 @@ export interface ChildRecord {
 	cwd: string;
 	placement: Placement;
 	launchedAt: number;
-	/** Owner id of the spawning process, so a reload keeps its children. */
+	/** Session id of the parent, so a reload keeps its children. */
 	launchedBy: string;
-	/** Proves this parent may drive the child. Never published. */
-	controlToken: string;
-	instanceId?: string | undefined;
-	pid?: number | undefined;
-	/** Process start time, so a recycled pid is never signalled. */
-	pidBirth?: string | undefined;
 	contextMode?: ContextMode | undefined;
+	/** The hub task of the first instruction. */
+	taskId?: string | undefined;
+	/** A temp session file for context=fork, deleted once the child is online. */
+	forkFile?: string | undefined;
 }
 
 export class ChildRecords {
@@ -76,17 +75,19 @@ export class ChildRecords {
 		return [...bySpawn.values()].sort((a, b) => a.launchedAt - b.launchedAt);
 	}
 
-	mine(owner: string): ChildRecord[] {
-		return this.all().filter((record) => record.launchedBy === owner);
+	mine(parent: string): ChildRecord[] {
+		return this.all().filter((record) => record.launchedBy === parent);
 	}
 
-	/** Deletes the record and every per-spawn file. A fork session file stays: the human may resume it. */
+	/** Deletes the record and every per-spawn file, with the temp fork source of a child that never came online. */
 	forget(spawnId: string): void {
+		const forkFile = this.all().find((record) => record.spawnId === spawnId)?.forkFile;
 		this.unsaved.delete(spawnId);
 		for (const path of [
+			...(forkFile ? [forkFile] : []),
 			this.file(spawnId),
 			spawnFilePath(this.paths, spawnId),
-			placedMarkerPath(this.paths.spawn, spawnId),
+			pidFilePath(this.paths, spawnId),
 			closeHookPath(this.paths, spawnId),
 		]) {
 			rmSync(path, { force: true });

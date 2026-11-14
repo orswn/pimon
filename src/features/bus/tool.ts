@@ -1,16 +1,25 @@
+import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { ago, ownerRef, truncate } from "./digest.ts";
-import type { WakePolicy } from "./identity.ts";
-import type { BusNode, SendInit } from "./node.ts";
-import type { Envelope, EnvelopeKind, PeerRecord, Priority, SendResult } from "./protocol.ts";
-import { fullId, shortId } from "./protocol.ts";
-import { formatLabels } from "./registry.ts";
-import { describeSelector } from "./selectors.ts";
-import type { BusStore } from "./store.ts";
+import type { BusMetadata, InboxItem, PendingResult, TaskUpdateBody } from "../../hub/protocol.ts";
+import { ago, truncate } from "./digest.ts";
+import { HubHttpError, HubUnreachableError, type HubClient, type SendOutcome } from "./hub/client.ts";
+import { formatLabels, type WakePolicy } from "./identity.ts";
+import {
+	type AgentInfo,
+	type BusKind,
+	MAX_FANOUT,
+	type Priority,
+	senderText,
+	shortId,
+	TERMINAL_TASK_STATES,
+	type Wake,
+	withoutAskedTasks,
+} from "./protocol.ts";
+import { describeSelector, isUnicastSelector, matchAgents, reachesOffline } from "./selectors.ts";
 
 export const BUS_TOOL_DESCRIPTION =
-	"Message other running pi instances on this host. Addressing uses selectors such as owner:<hex>, all, role:reviewer, name:x, children, topic:t. Sending never blocks: replies arrive later on their own.";
+	"Message other pi sessions through the bus hub. Addressing uses selectors such as id:<session id>, all, role:reviewer, name:x, children, topic:t. Sending never blocks: replies arrive later on their own.";
 
 const INBOX_BODY_CHARS = 140;
 
@@ -26,14 +35,15 @@ export const busToolSchema = Type.Object({
 		"subscribe",
 		"unsubscribe",
 		"whoami",
+		"set_status",
 	] as const),
 	target: Type.Optional(
 		Type.String({
 			description:
-				'Selector for send and probe. Examples: "owner:1a2b3c4d5e6f" (one process, stable across reloads), "id:<hex>" (one endpoint), "name:reviewer-2", "role:reviewer", "parent:<name or hex>" (peers with that parent), "children", "self", "session:<6 hex tag>", "state:idle", "stale" (late heartbeat), "topic:build", "label:k=v", "cwd:/path", "all". Combine with | for union, + for intersection, ! to exclude. A cwd: or label: value keeps | and + unless a selector or ! follows, so cwd:/a|bob is one path.',
+				'Selector for send and probe. Examples: "id:<session id>" (one session, stable across reloads and restarts), "name:reviewer-2", "role:reviewer", "parent:<name or id>" (peers with that parent), "children", "self", "host:mars", "state:idle", "state:offline", "topic:build", "label:k=v", "cwd:/path", "all". Combine with | for union, + for intersection, ! to exclude. A cwd: or label: value keeps | and + unless a selector or ! follows, so cwd:/a|bob is one path.',
 		}),
 	),
-	body: Type.Optional(Type.String({ description: "Message text for send and reply." })),
+	body: Type.Optional(Type.String({ description: "Message text for send and reply. Status text for set_status." })),
 	subject: Type.Optional(Type.String({ description: "Short subject line." })),
 	kind: Type.Optional(
 		StringEnum(["note", "question", "answer", "task", "result", "correction", "status", "event"] as const),
@@ -80,15 +90,16 @@ type BusAction =
 	| "pending"
 	| "subscribe"
 	| "unsubscribe"
-	| "whoami";
+	| "whoami"
+	| "set_status";
 
 export interface BusToolInput {
 	action: BusAction;
 	target?: string | undefined;
 	body?: string | undefined;
 	subject?: string | undefined;
-	kind?: Exclude<EnvelopeKind, "control"> | undefined;
-	wake?: "now" | "never" | undefined;
+	kind?: BusKind | undefined;
+	wake?: Wake | undefined;
 	priority?: Priority | undefined;
 	threadId?: string | undefined;
 	corrId?: string | undefined;
@@ -100,16 +111,40 @@ export interface BusToolInput {
 	unreadOnly?: boolean | undefined;
 }
 
+export interface SelfInfo {
+	id: string;
+	name: string;
+	role?: string | undefined;
+	parent?: string | undefined;
+	labels: Readonly<Record<string, string>>;
+	topics: readonly string[];
+	cwd: string;
+	ephemeral: boolean;
+}
+
 /** What the actions need from the running feature. Commands and the tool share it. */
 export interface ActionHost {
-	/** Throws when the node is not started. */
-	node(): BusNode;
-	store(): BusStore;
 	wakePolicy: WakePolicy;
-	/** Marks messages read and drops them from the digest queue. */
-	markRead(ids: Iterable<string>): void;
+	/** The hub client. Throws the short error that says why the bus cannot work: no url, no token, or a fatal link. */
+	hub(): HubClient;
+	/** Throws before the first session start. */
+	self(): SelfInfo;
+	hubUrl(): string | undefined;
+	/** One line on the link: online, retrying, stopped. */
+	linkText(): string;
+	/** Hub agents, cached for a short time. */
+	agents(includeOffline: boolean): Promise<AgentInfo[]>;
+	/** Marks inbox messages read and drops them from the digest queue. */
+	markRead(ids: string[]): Promise<void>;
+	setTopics(topics: string[]): void;
+	/** Stores the one-line status text on the hub, or keeps it until the link is up. Empty text clears it. */
+	setStatus(text: string): Promise<{ text: string; sent: boolean }>;
+	/** Keeps the title of a sent message or task, so an answer can name it. Tracks a lapse deadline when `expectReply`. */
+	sent(entry: { messageId: string; taskIds: string[]; title: string; expectReply: boolean; to: AgentInfo[] }): void;
 	/** Publishes status after a change. */
 	changed(): void;
+	/** The UI status line. */
+	statusLine(): string;
 }
 
 export interface ActionResult {
@@ -117,286 +152,588 @@ export interface ActionResult {
 	details: Record<string, unknown>;
 }
 
+export type DeliveryLine = {
+	name: string;
+	id?: string | undefined;
+	note?: string | undefined;
+	taskId?: string | undefined;
+} & (
+	| { state: "delivered" | "queued" }
+	| { state: "unconfirmed"; reason?: string | undefined }
+	| { state: "failed"; reason: string }
+);
+
+export interface SendResult {
+	messageId: string;
+	threadId: string;
+	lines: DeliveryLine[];
+}
+
+export interface SendInit {
+	body: string;
+	/** Defaults to a new id. */
+	messageId?: string | undefined;
+	kind?: BusKind | undefined;
+	wake?: Wake | undefined;
+	priority?: Priority | undefined;
+	subject?: string | undefined;
+	data?: unknown;
+	expectReply?: boolean | undefined;
+	threadId?: string | undefined;
+	replyTo?: string | undefined;
+	taskId?: string | undefined;
+}
+
 const REPLY_TARGET_ERROR =
 	'reply derives the recipient from messageId. Use action="send" with target to address a peer.';
 
-function describePeer(peer: PeerRecord): string {
+/** Turns a hub failure into one line for the model. */
+export function hubErrorText(error: unknown, url: string | undefined): string {
+	if (error instanceof HubUnreachableError)
+		return `pi_bus: the hub at ${url ?? "?"} is unreachable (${error.message}). The link retries in the background.`;
+	if (error instanceof HubHttpError) {
+		if (error.status === 426) {
+			const expected = error.body["expected"];
+			const version = typeof expected === "number" ? String(expected) : "?";
+			return `pi_bus: the hub speaks protocol ${version}, this pimon speaks 2. Update pimon or the hub.`;
+		}
+		return `pi_bus: the hub refused the request: ${error.message}`;
+	}
+	return error instanceof Error ? error.message : String(error);
+}
+
+async function hubCall<T>(host: ActionHost, run: (hub: HubClient) => Promise<T>): Promise<T> {
+	const hub = host.hub();
+	try {
+		return await run(hub);
+	} catch (error) {
+		throw new Error(hubErrorText(error, host.hubUrl()), { cause: error });
+	}
+}
+
+function statusOf(agent: AgentInfo): string | undefined {
+	if (!agent.status.text) return undefined;
+	const at = agent.status.at ? ` (${ago(Date.parse(agent.status.at))})` : "";
+	return `status="${agent.status.text}"${at}`;
+}
+
+function describeAgent(agent: AgentInfo): string {
 	return [
-		peer.name,
-		ownerRef(peer),
-		peer.stale ? "blocked" : peer.state,
-		peer.labels["role"] ? `role=${peer.labels["role"]}` : undefined,
-		peer.activity ? `doing="${truncate(peer.activity, 48)}"` : undefined,
-		`up=${ago(peer.startedAt)}`,
-		`cwd=${peer.cwd}`,
+		agent.name,
+		`id:${shortId(agent.id)}`,
+		agent.kind === "pi" ? undefined : `kind=${agent.kind}`,
+		agent.online ? agent.state : "offline",
+		agent.role ? `role=${agent.role}` : undefined,
+		agent.host ? `host=${agent.host}` : undefined,
+		agent.activity ? `doing="${truncate(agent.activity, 48)}"` : undefined,
+		statusOf(agent),
+		agent.cwd ? `cwd=${agent.cwd}` : undefined,
 	]
 		.filter(Boolean)
 		.join(" ");
 }
 
+/** The hub stored the message and the peer did not ack it within the delivery wait. */
+const UNCONFIRMED_TEXT = "stored; the peer did not confirm yet";
+
 export function formatSendResult(headline: string, result: SendResult): string {
-	const lines = [
-		`${headline} on thread ${shortId(result.envelope.threadId)} (messageId ${shortId(result.envelope.id)}).`,
-	];
-	if (result.delivered.length > 0)
-		lines.push(`delivered: ${result.delivered.map((peer) => `${peer.name} (${ownerRef(peer)})`).join(", ")}`);
-	for (const note of result.acks.filter((ack) => ack.reason)) lines.push(`note from ${note.name}: ${note.reason}`);
-	if (result.unknown.length > 0)
-		lines.push(`unconfirmed: ${result.unknown.map((peer) => `${peer.name} (${peer.reason})`).join(", ")}`);
-	if (result.failed.length > 0)
-		lines.push(`failed: ${result.failed.map((peer) => `${peer.name} (${peer.reason})`).join(", ")}`);
+	const lines = [`${headline} on thread ${shortId(result.threadId)} (messageId ${shortId(result.messageId)}).`];
+	const ref = (line: DeliveryLine) => (line.id ? `id:${shortId(line.id)}` : "principal");
+	const group = (state: DeliveryLine["state"], render: (line: DeliveryLine) => string) => {
+		const matching = result.lines.filter((line) => line.state === state);
+		if (matching.length > 0) lines.push(`${state}: ${matching.map(render).join(", ")}`);
+	};
+	group("delivered", (line) => `${line.name} (${ref(line)}${line.note ? `, ${line.note}` : ""})`);
+	group("queued", (line) => `${line.name} (${ref(line)}${line.note ? `, ${line.note}` : ""})`);
+	group(
+		"unconfirmed",
+		(line) => `${line.name} (${line.state === "unconfirmed" && line.reason ? line.reason : UNCONFIRMED_TEXT})`,
+	);
+	group("failed", (line) => `${line.name} (${line.state === "failed" ? line.reason : ""})`);
 	return lines.join("\n");
+}
+
+function handedOver(result: SendResult): boolean {
+	return result.lines.some((line) => line.state !== "failed");
+}
+
+function lineFor(agent: AgentInfo, outcome: SendOutcome): DeliveryLine {
+	if (outcome.state === "failed") return { name: agent.name, id: agent.id, state: "failed", reason: outcome.reason };
+	if (outcome.state === "unconfirmed") {
+		return { name: agent.name, id: agent.id, state: "unconfirmed", taskId: outcome.taskId, reason: outcome.reason };
+	}
+	return { name: agent.name, id: agent.id, state: outcome.state, taskId: outcome.taskId };
+}
+
+async function pool<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+	const results: R[] = [];
+	let next = 0;
+	const worker = async () => {
+		while (next < items.length) {
+			const index = next++;
+			results[index] = await run(items[index] as T);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
+}
+
+function isFullId(value: string): boolean {
+	return /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(value);
+}
+
+/** A dashed full id is the context id. Other values go through the hub, which also matches a hex id without dashes. */
+async function contextIdFor(hub: HubClient, threadId: string | undefined): Promise<string> {
+	if (!threadId) return randomUUID();
+	if (isFullId(threadId) && threadId.includes("-")) return threadId;
+	try {
+		return (await hub.thread(threadId)).contextId;
+	} catch (error) {
+		if (error instanceof HubHttpError && error.status === 404 && isFullId(threadId)) return threadId;
+		if (error instanceof HubHttpError && error.status === 404) throw new Error(`No thread ${threadId}.`);
+		if (error instanceof HubHttpError && error.status === 409) throw new Error(`Thread id ${threadId} is ambiguous.`);
+		throw error;
+	}
+}
+
+export async function resolveTargets(host: ActionHost, selector: string): Promise<AgentInfo[]> {
+	const self = host.self();
+	const agents = await host.agents(reachesOffline(selector));
+	return matchAgents(selector, agents, { selfId: self.id, selfName: self.name });
+}
+
+/** One message to every matching agent, `MAX_FANOUT` at a time. */
+export async function sendToAgents(host: ActionHost, targets: AgentInfo[], init: SendInit): Promise<SendResult> {
+	const hub = host.hub();
+	const kind = init.kind ?? "note";
+	const messageId = init.messageId ?? randomUUID();
+	const threadId = await contextIdFor(hub, init.threadId);
+	const expectReply = init.expectReply === true || kind === "question";
+	const meta: BusMetadata = { kind, wake: init.wake ?? "now" };
+	if (init.subject) meta.subject = init.subject;
+	if (init.priority && init.priority !== "normal") meta.priority = init.priority;
+	if (expectReply) meta.expectReply = true;
+	if (init.replyTo) meta.replyTo = init.replyTo;
+	if (init.data !== undefined) meta.data = init.data;
+	const taskIds: string[] = [];
+	const lines = await pool(targets, MAX_FANOUT, async (agent) => {
+		const outcome = await hub.sendMessage(agent.id, {
+			messageId,
+			contextId: threadId,
+			taskId: init.taskId,
+			text: init.body,
+			meta,
+		});
+		if (outcome.state !== "failed" && outcome.taskId) taskIds.push(outcome.taskId);
+		return lineFor(agent, outcome);
+	});
+	const result = { messageId, threadId, lines };
+	if (handedOver(result)) {
+		host.sent({
+			messageId,
+			taskIds,
+			title: truncate(init.subject || init.body, 60),
+			expectReply,
+			to: targets.filter((_agent, index) => lines[index]?.state !== "failed"),
+		});
+	}
+	return result;
 }
 
 function settle(host: ActionHost, headline: string, result: SendResult): ActionResult {
 	const text = formatSendResult(headline, result);
-	// Only a handed-over message is stored: a stored reply marks its question answered.
-	if (result.delivered.length + result.unknown.length === 0) throw new Error(text);
-	host.store().addOutbound(result.envelope);
+	if (!handedOver(result)) throw new Error(text);
 	host.changed();
 	return {
 		text,
 		details: {
-			envelope: host.store().find(result.envelope.id) ?? result.envelope,
-			delivered: result.delivered.map((peer) => peer.name),
+			messageId: result.messageId,
+			threadId: result.threadId,
+			delivery: result.lines.map((line) => ({ name: line.name, id: line.id, state: line.state })),
 		},
 	};
 }
 
 function whoamiAction(host: ActionHost): ActionResult {
-	const node = host.node();
+	const self = host.self();
+	const url = host.hubUrl();
 	const text = [
-		`name: ${node.name}`,
-		`owner: ${node.owner} (address as owner:${shortId(node.owner)}; stable across reloads)`,
-		`id: ${node.instanceId} (this endpoint; changes on reload)`,
-		`session tag: ${node.record.session || "none, this session is ephemeral"}`,
-		`labels: ${formatLabels(node.labels) || "none"}`,
-		`topics: ${node.topics.join(", ") || "none"}`,
-		`cwd: ${node.ref.cwd}`,
-		`socket: ${node.socketPath}`,
+		`name: ${self.name}`,
+		`id: ${self.id} (address as id:${shortId(self.id)}; stable across reloads and restarts)`,
+		`session: ${self.ephemeral ? "ephemeral, no session file" : "saved"}`,
+		self.role ? `role: ${self.role}` : undefined,
+		self.parent ? `parent: id:${shortId(self.parent)}` : undefined,
+		`labels: ${formatLabels(self.labels) || "none"}`,
+		`topics: ${self.topics.join(", ") || "none"}`,
+		`cwd: ${self.cwd}`,
+		url ? `hub: ${url} (${host.linkText()})` : "hub: none. Set features.bus.hub.url in pimon.json to use the bus.",
 		`wake policy: ${host.wakePolicy}`,
-		"Names are labels only. Address a specific instance by owner.",
-	].join("\n");
-	return { text, details: { name: node.name, instanceId: node.instanceId, owner: node.owner } };
+	]
+		.filter(Boolean)
+		.join("\n");
+	return { text, details: { name: self.name, id: self.id } };
 }
 
-export function peersAction(host: ActionHost): ActionResult {
-	const node = host.node();
-	const peers = node.peers(0).filter((peer) => peer.instanceId !== node.instanceId);
-	const text = peers.length === 0 ? "No other pi instances are on the bus." : peers.map(describePeer).join("\n");
-	return { text, details: { peers } };
+export async function peersAction(host: ActionHost): Promise<ActionResult> {
+	const self = host.self();
+	const agents = await hubCall(host, () => host.agents(false));
+	const peers = agents.filter((agent) => agent.id !== self.id);
+	const text = peers.length === 0 ? "No other sessions are on the bus." : peers.map(describeAgent).join("\n");
+	return { text, details: { peers: peers.map((agent) => ({ id: agent.id, name: agent.name, kind: agent.kind })) } };
 }
 
 export async function probeAction(host: ActionHost, target: string | undefined): Promise<ActionResult> {
 	const selector = target || "all";
-	const results = await host.node().probe(selector);
+	const matches = await hubCall(host, () => resolveTargets(host, selector));
 	const text =
-		results.length === 0
+		matches.length === 0
 			? `Nothing matches ${describeSelector(selector)}.`
-			: results
-					.map((entry) =>
+			: matches
+					.map((agent) =>
 						[
-							`${entry.name} (id:${shortId(entry.instanceId)})`,
-							entry.alive ? "alive" : "unreachable",
-							entry.state ? `state=${entry.state}` : undefined,
-							entry.activity ? `doing="${truncate(entry.activity, 60)}"` : undefined,
-							entry.rttMs !== undefined ? `rtt=${entry.rttMs}ms` : undefined,
-							entry.uptimeMs !== undefined ? `up=${ago(Date.now() - entry.uptimeMs)}` : undefined,
-							entry.reason ? `note=${entry.reason}` : undefined,
+							`${agent.name} (id:${shortId(agent.id)})`,
+							agent.online ? "online" : "offline",
+							agent.online ? `state=${agent.state}` : undefined,
+							agent.activity ? `doing="${truncate(agent.activity, 60)}"` : undefined,
+							agent.lastSeenAt ? `seen=${ago(Date.parse(agent.lastSeenAt))} ago` : undefined,
+							statusOf(agent),
 						]
 							.filter(Boolean)
 							.join(" "),
 					)
 					.join("\n");
-	return { text, details: { results } };
+	return {
+		text,
+		details: { results: matches.map((agent) => ({ id: agent.id, name: agent.name, online: agent.online })) },
+	};
 }
 
-function initFrom(params: BusToolInput, defaultKind: SendInit["kind"]): SendInit {
-	const kind = params.kind || defaultKind;
+function initFrom(params: BusToolInput, defaultKind: BusKind): SendInit {
 	return {
 		body: params.body ?? "",
-		kind,
+		kind: params.kind || defaultKind,
 		wake: params.wake || "now",
-		priority: params.priority || "normal",
+		priority: params.priority,
 		subject: params.subject,
 		data: params.data,
-		replyExpected: params.expectReply === true || kind === "question",
+		expectReply: params.expectReply,
 	};
+}
+
+/** A `result` or `answer` to the sender of exactly one open task of this session settles that task. */
+async function settlesOwedTask(hub: HubClient, targets: AgentInfo[], kind: BusKind): Promise<string | undefined> {
+	if ((kind !== "result" && kind !== "answer") || targets.length !== 1) return undefined;
+	const owed = await hub.owed();
+	const tasks = owed.tasks.filter((task) => task.agent === targets[0]?.id);
+	return tasks.length === 1 ? tasks[0]?.taskId : undefined;
+}
+
+/** A correction joins the newest open task this session sent to that recipient in that thread. */
+async function correctionTask(hub: HubClient, target: AgentInfo, threadId: string): Promise<string | undefined> {
+	const pending = await hub.pending();
+	return pending.tasks.filter((task) => task.agent === target.id && task.contextId === threadId).at(-1)?.taskId;
 }
 
 export async function sendAction(host: ActionHost, params: BusToolInput): Promise<ActionResult> {
 	if (!params.target) throw new Error('pi_bus action="send" requires target.');
 	if (!params.body) throw new Error('pi_bus action="send" requires body.');
-	const result = await host.node().send(params.target, { ...initFrom(params, "note"), threadId: params.threadId });
-	return settle(host, `Sent to ${describeSelector(params.target)}`, result);
+	const target = params.target;
+	const init = initFrom(params, "note");
+	return hubCall(host, async (hub) => {
+		const targets = await resolveTargets(host, target);
+		if (targets.length === 0) throw new Error(`No agent matches ${describeSelector(target)}. Nothing was sent.`);
+		if (targets.length > 1 && isUnicastSelector(target)) {
+			throw new Error(
+				`${describeSelector(target)} matches ${targets.length} agents: ${targets.map((agent) => `${agent.name} (id:${shortId(agent.id)})`).join(", ")}. Use id:<session id>. Nothing was sent.`,
+			);
+		}
+		const taskId = await settlesOwedTask(hub, targets, init.kind ?? "note");
+		const only = targets[0];
+		if (taskId && only) {
+			const result = await updateTask(host, hub, taskId, only, init);
+			return settle(host, `Sent to ${describeSelector(target)}`, result);
+		}
+		if (init.kind === "correction" && params.threadId && only && targets.length === 1) {
+			const threadId = await contextIdFor(hub, params.threadId);
+			const open = await correctionTask(hub, only, threadId);
+			const result = await sendToAgents(host, targets, { ...init, threadId, taskId: open });
+			return settle(host, `Sent to ${describeSelector(target)}`, result);
+		}
+		const result = await sendToAgents(host, targets, { ...init, threadId: params.threadId });
+		return settle(host, `Sent to ${describeSelector(target)}`, result);
+	});
 }
 
-function replyRecipient(envelope: Envelope): string {
-	if (!envelope.from.owner)
-		throw new Error(`Message ${shortId(envelope.id)} has no sender owner. Reply is not possible.`);
-	return `owner:${fullId(envelope.from.owner)}`;
+/** Completes, interrupts, or reports on a task that this session got, through the link task route. */
+async function updateTask(
+	host: ActionHost,
+	hub: HubClient,
+	taskId: string,
+	sender: { id?: string | undefined; name: string },
+	init: SendInit,
+): Promise<SendResult> {
+	const kind = init.kind ?? "answer";
+	const state: TaskUpdateBody["state"] =
+		kind === "question" ? "input-required" : kind === "status" ? "working" : "completed";
+	const body: TaskUpdateBody = { state, text: init.body };
+	if (state === "completed") body.artifact = { name: "result", text: init.body };
+	const updated = await hub.taskUpdate(taskId, body);
+	host.changed();
+	// The task route has no delivery wait. The hub stored the update; nothing confirms that the sender got it.
+	return {
+		messageId: updated.status?.message?.messageId ?? taskId,
+		threadId: updated.contextId,
+		lines: [
+			{
+				name: sender.name,
+				id: sender.id,
+				state: "queued",
+				note: state === "completed" ? "task completed" : `task ${state}`,
+			},
+		],
+	};
+}
+
+const REPLY_STATES: ReadonlySet<BusKind> = new Set(["result", "answer", "question", "status"]);
+
+async function findQuestion(host: ActionHost, hub: HubClient, params: BusToolInput): Promise<InboxItem> {
+	const id = params.messageId || params.corrId;
+	if (id) {
+		try {
+			return await hub.message(id);
+		} catch (error) {
+			if (error instanceof HubHttpError && error.status === 404) throw new Error(`No message ${id}.`);
+			if (error instanceof HubHttpError && error.status === 409) {
+				throw new Error(`Message id ${id} is ambiguous. Use more characters.`);
+			}
+			throw error;
+		}
+	}
+	if (params.threadId) {
+		let thread: Awaited<ReturnType<HubClient["thread"]>>;
+		try {
+			thread = await hub.thread(params.threadId);
+		} catch (error) {
+			if (error instanceof HubHttpError && error.status === 404) throw new Error(`No thread ${params.threadId}.`);
+			throw error;
+		}
+		const self = host.self();
+		const latest = thread.messages.filter((item) => item.direction === "in" && item.from.agent !== self.id).at(-1);
+		if (!latest) throw new Error(`Thread ${params.threadId} has no inbound message to answer.`);
+		return latest;
+	}
+	throw new Error('pi_bus action="reply" requires messageId: the id shown with the message to answer.');
 }
 
 export async function replyAction(host: ActionHost, params: BusToolInput): Promise<ActionResult> {
 	if (params.target) throw new Error(REPLY_TARGET_ERROR);
 	if (!params.body) throw new Error('pi_bus action="reply" requires body.');
-	const node = host.node();
-	const store = host.store();
-	const id = params.messageId || params.corrId;
-	let question: Envelope;
-	if (id) {
-		const found = store.lookup(id);
-		if ("error" in found) throw new Error(found.error);
-		question = found.envelope;
-	} else if (params.threadId) {
-		const latest = store.latestInbound(params.threadId);
-		if ("error" in latest) throw new Error(latest.error);
-		question = latest.envelope;
-	} else {
-		throw new Error('pi_bus action="reply" requires messageId: the id shown with the message to answer.');
-	}
-	if (store.isOutbound(question.id) || question.from.instanceId === node.instanceId) {
-		throw new Error(`Message ${shortId(question.id)} was sent by this instance. ${REPLY_TARGET_ERROR}`);
-	}
-	const result = await node.send(replyRecipient(question), {
-		...initFrom(params, "answer"),
-		threadId: question.threadId,
-		corrId: question.id,
+	const init = initFrom(params, "answer");
+	return hubCall(host, async (hub) => {
+		const self = host.self();
+		const question = await findQuestion(host, hub, params);
+		if (question.direction === "out" || question.from.agent === self.id) {
+			throw new Error(`Message ${shortId(question.messageId)} was sent by this session. ${REPLY_TARGET_ERROR}`);
+		}
+		const sender = { id: question.from.agent, name: question.from.name };
+		const headline = `Replied to ${senderText(sender)}`;
+		const live = question.taskId && question.taskState && !TERMINAL_TASK_STATES.has(question.taskState);
+		if (live && question.taskId) {
+			const owed = await hub.owed();
+			if (owed.tasks.some((task) => task.taskId === question.taskId) && REPLY_STATES.has(init.kind ?? "answer")) {
+				try {
+					return settle(host, headline, await updateTask(host, hub, question.taskId, sender, init));
+				} catch (error) {
+					if (!(error instanceof HubHttpError && error.status === 409)) throw error;
+				}
+			} else if (sender.id && (await hub.pending()).tasks.some((task) => task.taskId === question.taskId)) {
+				// An answer to a task this session sent and that waits for input continues that task.
+				const result = await sendToAgents(host, [agentStub(sender.id, sender.name)], {
+					...init,
+					threadId: question.contextId,
+					taskId: question.taskId,
+				});
+				return settle(host, headline, result);
+			}
+		}
+		if (!sender.id) {
+			throw new Error(
+				`Message ${shortId(question.messageId)} came from ${sender.name}, which is not a bus agent, and its task is closed. Reply is not possible.`,
+			);
+		}
+		const result = await sendToAgents(host, [agentStub(sender.id, sender.name)], {
+			...init,
+			threadId: question.contextId,
+			replyTo: question.messageId,
+		});
+		return settle(host, headline, result);
 	});
-	return settle(host, `Replied to ${question.from.name} (${ownerRef(question.from)})`, result);
 }
 
-export function inboxAction(host: ActionHost, options: { limit?: number; unreadOnly?: boolean }): ActionResult {
-	const store = host.store();
+function agentStub(id: string, name: string): AgentInfo {
+	return {
+		id,
+		name,
+		kind: "pi",
+		host: null,
+		cwd: null,
+		role: null,
+		labels: {},
+		parent: null,
+		topics: [],
+		online: true,
+		state: "idle",
+		activity: null,
+		status: { text: "", at: null },
+		lastSeenAt: null,
+	};
+}
+
+function fromRef(item: InboxItem): string {
+	return senderText({ id: item.from.agent, name: item.from.name });
+}
+
+export async function inboxAction(
+	host: ActionHost,
+	options: { limit?: number; unreadOnly?: boolean },
+): Promise<ActionResult> {
 	const limit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 10)));
 	const unreadOnly = options.unreadOnly !== false;
-	const shown = store.inbox.filter((envelope) => !unreadOnly || store.unread.has(envelope.id)).slice(-limit);
+	const shown = await hubCall(host, (hub) => hub.inbox({ unread: unreadOnly, limit }));
 	if (shown.length === 0)
 		return { text: unreadOnly ? "No unread bus messages." : "No bus messages.", details: { count: 0 } };
-	const text = [...shown]
-		.reverse()
-		.map((envelope) => {
-			const unread = store.unread.has(envelope.id) ? " unread" : "";
-			return `messageId=${shortId(envelope.id)}${unread} · ${ago(envelope.createdAt)} ago · ${envelope.kind} from ${envelope.from.name} ${ownerRef(envelope.from)} · thread ${shortId(envelope.threadId)}: ${truncate(envelope.body, INBOX_BODY_CHARS)}`;
+	const text = shown
+		.map((item) => {
+			const unread = item.read ? "" : " unread";
+			const task = item.taskState ? ` · task ${item.taskState}` : "";
+			return `messageId=${shortId(item.messageId)}${unread} · ${ago(Date.parse(item.createdAt))} ago · ${item.kind} from ${fromRef(item)}${task} · thread ${shortId(item.contextId)}: ${truncate(item.text, INBOX_BODY_CHARS)}`;
 		})
 		.join("\n");
 	// A cut body is not read yet: the reader saw only its start.
-	const whole = shown.filter((envelope) => envelope.body.replace(/\s+/g, " ").trim().length <= INBOX_BODY_CHARS);
-	host.markRead(whole.map((envelope) => envelope.id));
+	const whole = shown.filter((item) => !item.read && item.text.replace(/\s+/g, " ").trim().length <= INBOX_BODY_CHARS);
+	await host.markRead(whole.map((item) => item.messageId));
 	host.changed();
 	return { text, details: { count: shown.length, markedRead: whole.length } };
 }
 
-function formatEnvelopes(envelopes: Envelope[]): string {
-	if (envelopes.length === 0) return "Nothing found.";
-	return envelopes
-		.map((envelope) => {
+function formatItems(items: InboxItem[]): string {
+	if (items.length === 0) return "Nothing found.";
+	return items
+		.map((item) => {
 			const head = [
-				`messageId=${shortId(envelope.id)} threadId=${shortId(envelope.threadId)}${envelope.corrId ? ` corrId=${shortId(envelope.corrId)}` : ""}`,
-				`from=${envelope.from.name} (${ownerRef(envelope.from)}) to=${envelope.to}`,
-				`kind=${envelope.kind} wake=${envelope.wake}${envelope.replyExpected ? " replyExpected" : ""} at=${new Date(envelope.createdAt).toISOString()}`,
+				`messageId=${shortId(item.messageId)} threadId=${shortId(item.contextId)}${item.replyTo ? ` replyTo=${shortId(item.replyTo)}` : ""}${item.taskId ? ` task=${shortId(item.taskId)}${item.taskState ? ` ${item.taskState}` : ""}` : ""}`,
+				`from=${item.from.name} (${item.from.agent ? `id:${shortId(item.from.agent)}` : "principal"}) to=${item.to.name} (id:${shortId(item.to.agent)})`,
+				`kind=${item.kind} wake=${item.wake}${item.expectReply ? " expectReply" : ""} at=${item.createdAt}`,
 			].join("\n");
-			const data = envelope.data === undefined ? "" : `\ndata: ${JSON.stringify(envelope.data, null, 2)}`;
-			return `${head}\n${envelope.subject ? `subject: ${envelope.subject}\n` : ""}${envelope.body}${data}`;
+			const data = item.data === undefined ? "" : `\ndata: ${JSON.stringify(item.data, null, 2)}`;
+			return `${head}\n${item.subject ? `subject: ${item.subject}\n` : ""}${item.text}${data}`;
 		})
 		.join("\n\n---\n\n");
 }
 
-function readAction(host: ActionHost, params: { messageId?: string; threadId?: string }): ActionResult {
-	const store = host.store();
-	let envelopes: Envelope[];
-	if (params.messageId) {
-		const found = store.lookup(params.messageId);
-		if ("error" in found) throw new Error(found.error);
-		envelopes = [found.envelope];
-	} else if (params.threadId) {
-		envelopes = store.thread(params.threadId);
-	} else {
-		throw new Error('pi_bus action="read" requires messageId or threadId.');
-	}
-	host.markRead(envelopes.map((envelope) => envelope.id));
+async function readAction(host: ActionHost, params: { messageId?: string; threadId?: string }): Promise<ActionResult> {
+	const { messageId, threadId } = params;
+	if (!messageId && !threadId) throw new Error('pi_bus action="read" requires messageId or threadId.');
+	const items = await hubCall(host, async (hub) => {
+		try {
+			if (messageId) return [await hub.message(messageId)];
+			return (await hub.thread(threadId ?? "")).messages;
+		} catch (error) {
+			if (error instanceof HubHttpError && error.status === 404) return [];
+			if (error instanceof HubHttpError && error.status === 409) {
+				throw new Error(
+					`${messageId ? "Message" : "Thread"} id ${messageId ?? threadId} is ambiguous. Use more characters.`,
+				);
+			}
+			throw error;
+		}
+	});
+	await host.markRead(items.filter((item) => item.direction === "in" && !item.read).map((item) => item.messageId));
 	host.changed();
-	return { text: formatEnvelopes(envelopes), details: { count: envelopes.length } };
+	return { text: formatItems(items), details: { count: items.length } };
 }
 
-export function pendingAction(host: ActionHost): ActionResult {
-	const pending = host.node().pendingQuestions();
-	if (pending.length === 0) return { text: "No open questions.", details: { pending } };
-	const text = pending
-		.map((entry) => {
-			const outstanding = entry.targets
-				.filter((target) => !target.answered && !target.gone)
-				.map((target) => (target.owner ? `${target.name} (owner:${shortId(target.owner)})` : target.name));
-			const answered = entry.targets.filter((target) => target.answered).map((target) => target.name);
-			const gone = entry.targets.filter((target) => target.gone).map((target) => target.name);
-			return [
-				`messageId=${shortId(entry.envelopeId)} asked ${ago(entry.askedAt)} ago on thread ${shortId(entry.threadId)}`,
-				`  text: ${truncate(entry.subject || entry.body, 120)}`,
-				`  waiting on: ${outstanding.length ? outstanding.join(", ") : "nobody"}`,
-				answered.length ? `  answered: ${answered.join(", ")}` : undefined,
-				gone.length ? `  gone: ${gone.join(", ")}` : undefined,
-			]
-				.filter(Boolean)
-				.join("\n");
-		})
-		.join("\n");
-	return { text, details: { pending } };
+export function formatPending(raw: PendingResult): string {
+	const pending = withoutAskedTasks(raw);
+	if (pending.expectReply.length === 0 && pending.tasks.length === 0) return "No open questions.";
+	const lines: string[] = [];
+	for (const entry of pending.expectReply) {
+		lines.push(
+			`messageId=${shortId(entry.messageId)} asked ${ago(Date.parse(entry.createdAt))} ago on thread ${shortId(entry.contextId)}`,
+			`  waiting on: ${entry.name} (id:${shortId(entry.agent)})`,
+		);
+	}
+	for (const task of pending.tasks) {
+		lines.push(
+			`task ${shortId(task.taskId)} ${task.state}, sent ${ago(Date.parse(task.createdAt))} ago on thread ${shortId(task.contextId)}`,
+			`  waiting on: ${task.name}${task.agent ? ` (id:${shortId(task.agent)})` : ""}`,
+		);
+	}
+	return lines.join("\n");
 }
 
-function topicAction(host: ActionHost, action: "subscribe" | "unsubscribe", topic: string | undefined): ActionResult {
+export async function pendingAction(host: ActionHost): Promise<ActionResult> {
+	const pending = await hubCall(host, (hub) => hub.pending());
+	return { text: formatPending(pending), details: { pending } };
+}
+
+async function topicAction(
+	host: ActionHost,
+	action: "subscribe" | "unsubscribe",
+	topic: string | undefined,
+): Promise<ActionResult> {
 	if (!topic) throw new Error(`pi_bus action="${action}" requires topic.`);
-	const node = host.node();
-	if (action === "subscribe") node.subscribe(topic);
-	else node.unsubscribe(topic);
-	return { text: `Topics: ${node.topics.join(", ") || "none"}`, details: { topics: node.topics } };
-}
-
-export function statusText(host: ActionHost, node: BusNode | undefined): string {
-	if (!node) return "bus: offline";
-	const peers = node.peers().filter((peer) => peer.instanceId !== node.instanceId);
-	const unread = host.store().unread.size;
-	const pending = node.pendingQuestions().length;
-	const parts = [`bus: ${peers.length} peer${peers.length === 1 ? "" : "s"}`];
-	if (unread > 0) parts.push(`${unread} unread`);
-	if (pending > 0) parts.push(`${pending} awaiting reply`);
-	return parts.join(", ");
+	const topics = await hubCall(host, (hub) =>
+		hub.topics(action === "subscribe" ? { subscribe: [topic] } : { unsubscribe: [topic] }),
+	);
+	host.setTopics(topics);
+	return { text: `Topics: ${topics.join(", ") || "none"}`, details: { topics } };
 }
 
 export function busStatusAction(host: ActionHost): ActionResult {
-	const node = host.node();
+	const self = host.self();
 	const text = [
-		statusText(host, node),
-		`me: ${node.name} (owner:${shortId(node.owner)}, id:${shortId(node.instanceId)})`,
-		`labels: ${formatLabels(node.labels) || "none"}`,
-		`socket: ${node.socketPath}`,
+		host.statusLine(),
+		`me: ${self.name} (id:${shortId(self.id)})`,
+		`labels: ${formatLabels(self.labels) || "none"}`,
+		`hub: ${host.hubUrl() ?? "none"} (${host.linkText()})`,
 	].join("\n");
 	return { text, details: {} };
 }
 
-export async function doctorAction(host: ActionHost): Promise<ActionResult> {
-	const node = host.node();
-	const peers = node.peers(0);
-	const mine = peers.filter((peer) => peer.instanceId === node.instanceId).length;
-	const counts = new Map<string, number>();
-	for (const peer of peers) counts.set(peer.name, (counts.get(peer.name) ?? 0) + 1);
-	const duplicates = [...counts].filter(([, count]) => count > 1).map(([name]) => name);
-	const blocked = peers.filter((peer) => peer.stale);
-	const probes = await node.probe("all");
-	const text = [
-		`identity: ${node.name} owner:${shortId(node.owner)} id:${shortId(node.instanceId)}`,
-		`socket: ${node.socketPath}`,
-		`own presence file visible: ${mine === 1 ? "yes" : `no (${mine} matches)`}`,
-		`peers: ${peers.length} total, ${blocked.length} blocked`,
-		`duplicate names: ${duplicates.join(", ") || "none"}`,
-		`unreachable: ${
-			probes
-				.filter((entry) => !entry.alive)
-				.map((entry) => entry.name)
-				.join(", ") || "none"
-		}`,
-		`wake policy: ${host.wakePolicy}`,
-	].join("\n");
-	return { text, details: {} };
+export async function doctorAction(host: ActionHost, tokenCheck: () => string): Promise<ActionResult> {
+	const self = host.self();
+	const lines = [
+		`identity: ${self.name} id:${shortId(self.id)}`,
+		`hub: ${host.hubUrl() ?? "none"}`,
+		`token: ${tokenCheck()}`,
+		`link: ${host.linkText()}`,
+	];
+	try {
+		const hub = host.hub();
+		const health = await hub.health();
+		lines.push(`health: ok, hub ${health.version}, ${health.agents} agent(s) online`);
+		const agents = await hub.agents(false);
+		lines.push(`registered: ${agents.some((agent) => agent.id === self.id) ? "yes" : "no"}`);
+		const counts = new Map<string, number>();
+		for (const agent of agents) counts.set(agent.name, (counts.get(agent.name) ?? 0) + 1);
+		const duplicates = [...counts].filter(([, count]) => count > 1).map(([name]) => name);
+		lines.push(`duplicate names: ${duplicates.join(", ") || "none"}`);
+	} catch (error) {
+		lines.push(`health: ${hubErrorText(error, host.hubUrl())}`);
+	}
+	lines.push(`wake policy: ${host.wakePolicy}`);
+	return { text: lines.join("\n"), details: {} };
+}
+
+export async function setStatusAction(host: ActionHost, body: string | undefined): Promise<ActionResult> {
+	try {
+		const { text, sent } = await host.setStatus(body ?? "");
+		const later = sent ? "" : "\nThe hub gets it when the link is back.";
+		return { text: `${text ? `Status set: ${text}` : "Status cleared."}${later}`, details: { text, sent } };
+	} catch (error) {
+		throw new Error(hubErrorText(error, host.hubUrl()), { cause: error });
+	}
 }
 
 export async function runToolAction(host: ActionHost, params: BusToolInput): Promise<ActionResult> {
@@ -426,6 +763,8 @@ export async function runToolAction(host: ActionHost, params: BusToolInput): Pro
 		case "subscribe":
 		case "unsubscribe":
 			return topicAction(host, params.action, params.topic);
+		case "set_status":
+			return setStatusAction(host, params.body);
 		default:
 			throw new Error(`Unknown pi_bus action: ${String(params.action)}`);
 	}

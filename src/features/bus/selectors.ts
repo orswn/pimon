@@ -1,12 +1,12 @@
 // Selector grammar: tokens joined by `|` (union) or `+` (intersection). `!token` excludes.
-// Self is excluded unless the selector names this instance. Every malformed selector raises SelectorError.
+// Self is excluded unless the selector names this session. Every malformed selector raises SelectorError.
 
-import type { PeerRecord } from "./protocol.ts";
+import { sessionTag } from "./identity.ts";
+import type { AgentInfo } from "./protocol.ts";
 import { fullId, idFragment } from "./protocol.ts";
 
 export interface SelectorContext {
-	selfInstanceId: string;
-	selfOwner: string;
+	selfId: string;
 	selfName: string;
 }
 
@@ -19,7 +19,7 @@ interface Token {
 export class SelectorError extends Error {}
 
 const VALUELESS = new Set(["all", "self", "children", "stale"]);
-const VALUED = new Set(["id", "owner", "session", "name", "role", "label", "topic", "cwd", "parent", "state"]);
+const VALUED = new Set(["id", "owner", "session", "name", "role", "label", "topic", "cwd", "parent", "state", "host"]);
 /** Only these values are free text that can hold `|` or `+`. */
 const FREE_TEXT = new Set(["cwd", "label"]);
 
@@ -45,9 +45,12 @@ function parseToken(raw: string): Token {
 	if (!value) throw new SelectorError(`selector ${kind} needs a value`);
 
 	if (kind === "id" || kind === "owner") {
+		// `owner:` is the old name of `id:`. A non-hex value names an agent id exactly, such as an external agent.
 		const fragment = idFragment(value);
-		if (!fragment) throw new SelectorError(`${kind} selector needs 8 to 32 hex characters, got "${value}"`);
-		return { negated, kind, value: fragment };
+		if (fragment) return { negated, kind: "id", value: fragment };
+		if (/^[0-9a-f-]+$/i.test(value) || kind === "owner")
+			throw new SelectorError(`${kind} selector needs 8 to 32 hex characters, got "${value}"`);
+		return { negated, kind: "id", value: `=${value}` };
 	}
 	if (kind === "label" && value.indexOf("=") === 0) throw new SelectorError("label selector needs key or key=value");
 
@@ -103,55 +106,57 @@ export function parseSelector(selector: string): Token[][] {
 	return groups;
 }
 
-function hexMatches(value: string | undefined, fragment: string): boolean {
+function hexMatches(value: string | null | undefined, fragment: string): boolean {
 	if (!value) return false;
+	if (fragment.startsWith("=")) return value === fragment.slice(1);
 	const hex = fullId(value);
 	// A full id must match exactly, so a prefix collision cannot turn a pinned send into a broadcast.
 	return fragment.length === 32 ? hex === fragment : hex.startsWith(fragment);
 }
 
-function matchesToken(token: Token, peer: PeerRecord, ctx: SelectorContext, peers: PeerRecord[]): boolean {
+function matchesToken(token: Token, agent: AgentInfo, ctx: SelectorContext, agents: AgentInfo[]): boolean {
 	switch (token.kind) {
 		case "all":
-			return true;
+			return agent.online;
 		case "self":
-			return peer.instanceId === ctx.selfInstanceId;
+			return agent.id === ctx.selfId;
 		case "stale":
-			return peer.stale === true;
+			// Kept so old selectors still parse. The hub reports liveness itself.
+			return false;
 		case "id":
-			return hexMatches(peer.instanceId, token.value);
-		case "owner":
-			return hexMatches(peer.owner, token.value);
+			return hexMatches(agent.id, token.value);
 		case "name":
-			return peer.name === token.value;
+			return agent.name === token.value;
 		case "role":
-			return peer.labels["role"] === token.value;
+			return agent.role === token.value;
 		case "state":
-			return peer.state === token.value;
+			return token.value === "offline" ? !agent.online : agent.online && agent.state === token.value;
 		case "session":
-			return peer.session === token.value;
+			return sessionTag(agent.id) === token.value;
+		case "host":
+			return agent.host === token.value;
 		case "topic":
-			return peer.topics.includes(token.value);
-		case "cwd":
-			return peer.cwd === token.value || peer.cwd.startsWith(`${token.value.replace(/\/$/, "")}/`);
+			return agent.topics.includes(token.value);
+		case "cwd": {
+			const cwd = agent.cwd ?? "";
+			return cwd === token.value || cwd.startsWith(`${token.value.replace(/\/$/, "")}/`);
+		}
 		case "children":
-			return peer.labels["parent"] === ctx.selfOwner || peer.labels["parent"] === ctx.selfInstanceId;
+			return agent.parent === ctx.selfId;
 		case "parent": {
-			const parent = peer.labels["parent"];
+			const parent = agent.parent;
 			if (!parent) return false;
-			// An exact live name wins over an id reading, so a peer named "deadbeef" stays selectable.
-			const named = peers.filter((candidate) => candidate.name === token.value);
-			if (named.length > 0) {
-				return named.some((candidate) => candidate.instanceId === parent || candidate.owner === parent);
-			}
+			// An exact name wins over an id reading, so an agent named "deadbeef" stays selectable.
+			const named = agents.filter((candidate) => candidate.name === token.value);
+			if (named.length > 0) return named.some((candidate) => candidate.id === parent);
 			const fragment = idFragment(token.value);
 			if (!fragment) return false;
 			return hexMatches(parent, fragment);
 		}
 		case "label": {
 			const eq = token.value.indexOf("=");
-			if (eq === -1) return peer.labels[token.value] !== undefined;
-			return peer.labels[token.value.slice(0, eq)] === token.value.slice(eq + 1);
+			if (eq === -1) return agent.labels[token.value] !== undefined;
+			return agent.labels[token.value.slice(0, eq)] === token.value.slice(eq + 1);
 		}
 		default:
 			return false;
@@ -163,20 +168,32 @@ function mentionsSelf(groups: Token[][], ctx: SelectorContext): boolean {
 		for (const token of group) {
 			if (token.negated) continue;
 			if (token.kind === "self") return true;
-			if (token.kind === "id" && hexMatches(ctx.selfInstanceId, token.value)) return true;
-			if (token.kind === "owner" && hexMatches(ctx.selfOwner, token.value)) return true;
+			if (token.kind === "id" && hexMatches(ctx.selfId, token.value)) return true;
 			if (token.kind === "name" && token.value === ctx.selfName) return true;
 		}
 	}
 	return false;
 }
 
-export function matchPeers(selector: string, peers: PeerRecord[], ctx: SelectorContext): PeerRecord[] {
+/**
+ * Offline agents count only for a unicast `id:` selector or one that holds `state:offline`.
+ * Else `all` would reach every session of the last 7 days.
+ */
+export function reachesOffline(selector: string): boolean {
+	const groups = parseSelector(selector);
+	const tokens = groups.flat();
+	if (tokens.some((token) => token.kind === "state" && token.value === "offline" && !token.negated)) return true;
+	return groups.length === 1 && (groups[0] ?? []).some((token) => token.kind === "id" && !token.negated);
+}
+
+export function matchAgents(selector: string, agents: AgentInfo[], ctx: SelectorContext): AgentInfo[] {
 	const groups = parseSelector(selector);
 	const includeSelf = mentionsSelf(groups, ctx);
-	return peers.filter((peer) => {
-		if (!includeSelf && peer.instanceId === ctx.selfInstanceId) return false;
-		return groups.some((group) => group.every((token) => matchesToken(token, peer, ctx, peers) !== token.negated));
+	const offline = reachesOffline(selector);
+	return agents.filter((agent) => {
+		if (!includeSelf && agent.id === ctx.selfId) return false;
+		if (!agent.online && !offline) return false;
+		return groups.some((group) => group.every((token) => matchesToken(token, agent, ctx, agents) !== token.negated));
 	});
 }
 
@@ -189,9 +206,7 @@ export function isUnicastSelector(selector: string): boolean {
 		return false;
 	}
 	if (groups.length !== 1) return false;
-	return (groups[0] ?? []).some(
-		(token) => !token.negated && (token.kind === "name" || token.kind === "id" || token.kind === "owner"),
-	);
+	return (groups[0] ?? []).some((token) => !token.negated && (token.kind === "name" || token.kind === "id"));
 }
 
 export function describeSelector(selector: string): string {

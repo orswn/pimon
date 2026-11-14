@@ -1,22 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, statSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { StringEnum, uuidv7 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { BusService } from "../bus/index.ts";
-import type { PeerGone } from "../bus/node.ts";
-import type { SendResult } from "../bus/protocol.ts";
-import type { PeerRecord } from "../bus/protocol.ts";
+import type { PresenceEvent } from "../../hub/protocol.ts";
+import { HubHttpError, NO_ANSWER } from "../bus/hub/client.ts";
+import { defaultName } from "../bus/identity.ts";
+import type { AgentInfo, BusService } from "../bus/index.ts";
 import { shortId } from "../bus/protocol.ts";
-import { pidAlive, pidBirth } from "../bus/registry.ts";
-import { defineSessionRole, deleteSessionRole, pruneOld, sessionKey, sessionRolesDir } from "./adhoc.ts";
+import { DAY_MS, defineSessionRole, deleteSessionRole, pruneOld, sessionKey, sessionRolesDir } from "./adhoc.ts";
 import { buildInitialPrompt, CONTEXT_MODES, createForkSession, resolveContextMode } from "./context.ts";
 import { OUTSIDE_HERDR, type Placement, type Placer, writeCloseHook } from "./placement.ts";
 import { type ChildRecord, ChildRecords } from "./records.ts";
 import { discoverRoles, findRole, formatRoles, parseLabelList, type Role, type RoleSources } from "./roles.ts";
 import { formatRuntime, type ResolvedRuntime, resolveRuntime, THINKING_LEVELS } from "./runtime.ts";
-import { type AgentPaths, placedMarkerPath, writePrivateFile, writeSpawnFile } from "./spawn-file.ts";
+import { pidGone, pidLive, sameProcess } from "./pid.ts";
+import { type AgentPaths, readPidFile, writeSpawnFile } from "./spawn-file.ts";
 
 const RESERVED_LABELS = new Set(["spawn", "depth", "parent", "owner", "role"]);
 const MAX_DEPTH = 2;
@@ -138,7 +139,7 @@ export interface AgentsHost {
 	userRolesDir: string;
 	placer: Placer;
 	records: ChildRecords;
-	timing: { spawnWaitMs: number; pollMs: number; killGraceMs: number; placedPollMs: number; placedWaitMs: number };
+	timing: { spawnWaitMs: number; killGraceMs: number };
 	/** Prunes old files once per process. */
 	pruneOnce(sessionRoleKey: string): void;
 }
@@ -167,17 +168,14 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	});
 }
 
-function requireBus(bus: BusService): BusService {
-	if (!bus.started) {
-		throw new Error(
-			"pi-bus is not running, so child ownership cannot be verified. Refusing to act on stored child records.",
-		);
-	}
+function requireHub(bus: BusService): BusService {
+	const reason = bus.unavailable();
+	if (reason) throw new Error(`${reason} Child ownership cannot be verified, so stored child records are not used.`);
 	return bus;
 }
 
 function roleSources(host: AgentsHost, ctx: ExtensionContext, projectRoles: boolean | undefined): RoleSources {
-	const key = sessionKey(ctx.sessionManager.getSessionId(), host.bus.owner);
+	const key = sessionKey(ctx.sessionManager.getSessionId());
 	host.pruneOnce(key);
 	return {
 		userDir: host.userRolesDir,
@@ -187,56 +185,19 @@ function roleSources(host: AgentsHost, ctx: ExtensionContext, projectRoles: bool
 	};
 }
 
-/** Resolve the one live peer for a record. A foreign parent label is never accepted. */
-function matchingPeer(host: AgentsHost, record: ChildRecord): PeerRecord | undefined {
-	if (!host.bus.started) return undefined;
-	let matches: PeerRecord[];
-	try {
-		matches = host.bus.resolve(`label:spawn=${record.spawnId}`);
-	} catch {
-		return undefined;
-	}
-	const mine = matches.filter((peer) => peer.labels["parent"] === host.bus.owner);
-	return mine.length === 1 ? mine[0] : undefined;
-}
-
-/** A changed endpoint is not adopted: child reload is unsupported and its control link is stale. */
-function peerFor(host: AgentsHost, record: ChildRecord): PeerRecord | undefined {
-	const peer = matchingPeer(host, record);
-	if (!peer || (record.instanceId && peer.instanceId !== record.instanceId)) return undefined;
-	return peer;
-}
-
-function endpointChangedPeer(host: AgentsHost, record: ChildRecord): PeerRecord | undefined {
-	const peer = matchingPeer(host, record);
-	return peer && record.instanceId && peer.instanceId !== record.instanceId ? peer : undefined;
-}
-
-/** A child that joined after the spawn wait. Without its endpoint, exit notices and cleanup never match it. */
-function adoptLateChild(host: AgentsHost, record: ChildRecord): void {
-	if (record.instanceId) return;
-	const peer = peerFor(host, record);
-	if (!peer) return;
-	record.name = peer.name;
-	record.instanceId = peer.instanceId;
-	record.pid = peer.pid;
-	record.pidBirth = peer.pidBirth;
-	try {
-		host.records.save(record);
-	} catch {
-		// The record stays owned in memory; the next save retries.
-	}
-	host.bus.watch(peer);
+/** Hub rows of this session's children, online or offline, by session id. */
+export async function childAgents(host: AgentsHost): Promise<Map<string, AgentInfo>> {
+	const self = host.bus.id;
+	const agents = await host.bus.agents(true);
+	return new Map(agents.filter((agent) => agent.parent === self).map((agent) => [agent.id, agent]));
 }
 
 function myChildren(host: AgentsHost): ChildRecord[] {
-	const children = host.records.mine(host.bus.owner);
-	for (const child of children) adoptLateChild(host, child);
-	return children;
+	return host.records.mine(host.bus.id);
 }
 
 function resolveChild(host: AgentsHost, reference: string | undefined): ChildRecord {
-	requireBus(host.bus);
+	requireHub(host.bus);
 	const children = myChildren(host);
 	if (children.length === 0) throw new Error("No children have been spawned from this session.");
 	if (!reference) {
@@ -244,13 +205,14 @@ function resolveChild(host: AgentsHost, reference: string | undefined): ChildRec
 		throw new Error(`Name the child. Current children: ${children.map((child) => child.name).join(", ")}`);
 	}
 	const wanted = reference.replace(/^id:/, "").toLowerCase();
+	const hex = wanted.replace(/-/g, "");
 	const matches = children.filter(
 		(child) =>
 			child.name === reference ||
 			child.name.toLowerCase().startsWith(wanted) ||
 			child.role.toLowerCase() === wanted ||
 			child.spawnId.startsWith(wanted) ||
-			(child.instanceId ? shortId(child.instanceId).startsWith(wanted) : false),
+			(hex.length >= 4 && child.spawnId.replace(/-/g, "").startsWith(hex)),
 	);
 	if (matches.length === 1 && matches[0]) return matches[0];
 	if (matches.length === 0) {
@@ -259,28 +221,23 @@ function resolveChild(host: AgentsHost, reference: string | undefined): ChildRec
 		);
 	}
 	throw new Error(
-		`"${reference}" matches ${matches.length} children: ${matches.map((child) => child.name).join(", ")}. Use the exact name or the spawn id from action="list".`,
+		`"${reference}" matches ${matches.length} children: ${matches.map((child) => child.name).join(", ")}. Use the exact name or the id from action="list".`,
 	);
 }
 
-type ChildStatus = "live" | "blocked" | "exited" | "starting" | "never-started" | "endpoint-changed";
+type ChildStatus = "online" | "offline" | "starting" | "never-started";
 
-function childStatus(record: ChildRecord, peer: PeerRecord | undefined, changed: PeerRecord | undefined): ChildStatus {
-	if (changed) return "endpoint-changed";
-	if (peer) return peer.stale ? "blocked" : "live";
-	// A pane outlives its child, so having been seen on the bus once separates exited from never started.
-	if (record.instanceId) return "exited";
+function childStatus(record: ChildRecord, agent: AgentInfo | undefined): ChildStatus {
+	if (agent?.online) return "online";
+	// The parent makes the hub row before the child starts, so only a link sets lastSeenAt.
+	if (agent?.lastSeenAt) return "offline";
 	return Date.now() - record.launchedAt < STARTING_MS ? "starting" : "never-started";
 }
 
-/**
- * A child that is starting or on the bus. `leftEndpoints` holds endpoints that announced their exit:
- * their presence stays listed until the child process removes it.
- */
-export function isActiveChild(host: AgentsHost, record: ChildRecord, leftEndpoints: ReadonlySet<string>): boolean {
-	const left = record.instanceId !== undefined && leftEndpoints.has(record.instanceId);
-	const state = childStatus(record, left ? undefined : peerFor(host, record), endpointChangedPeer(host, record));
-	return state !== "exited" && state !== "never-started";
+/** A child that is starting or online. */
+export function isActiveChild(record: ChildRecord, agent: AgentInfo | undefined): boolean {
+	const state = childStatus(record, agent);
+	return state === "online" || state === "starting";
 }
 
 function paneText(placement: Placement, alive: boolean | undefined): string {
@@ -288,106 +245,86 @@ function paneText(placement: Placement, alive: boolean | undefined): string {
 	return alive ? `${placement.kind} ${placement.layout}` : `${placement.kind} ${placement.layout}, pane is gone`;
 }
 
-async function describeChild(host: AgentsHost, record: ChildRecord): Promise<string> {
-	const peer = peerFor(host, record);
-	const changed = endpointChangedPeer(host, record);
+function statusText(agent: AgentInfo | undefined): string | undefined {
+	if (!agent?.status.text) return undefined;
+	const at = agent.status.at ? ` (${ago(Date.parse(agent.status.at))} ago)` : "";
+	return `"${agent.status.text}"${at}`;
+}
+
+async function describeChild(host: AgentsHost, record: ChildRecord, agent: AgentInfo | undefined): Promise<string> {
 	const alive = await host.placer.alive(record.placement);
-	const state = childStatus(record, peer, changed);
+	const state = childStatus(record, agent);
 	const status =
-		state === "live"
-			? peer?.state || "idle"
-			: state === "blocked"
-				? "blocked, its event loop is stalled"
-				: state === "endpoint-changed"
-					? "endpoint changed after child reload, child reload is unsupported"
-					: state === "exited"
-						? `exited${alive ? ", its pane is still open" : ""}`
-						: state === "starting"
-							? "starting, not on the bus yet"
-							: "never joined the bus, check its pane for an error";
-	const activity = peer?.activity || changed?.activity;
-	const address = peer
-		? `owner:${shortId(peer.owner)}`
-		: changed
-			? `endpoint changed, new owner:${shortId(changed.owner)}`
-			: "not on the bus";
+		state === "online"
+			? agent?.state || "idle"
+			: state === "offline"
+				? `offline${alive ? ", its pane is still open" : ""}`
+				: state === "starting"
+					? "starting, not on the bus yet"
+					: "never joined the bus, check its pane for an error";
+	const activity = state === "online" ? agent?.activity : undefined;
+	const said = statusText(agent);
 	return [
 		`${record.name} (${record.role})`,
 		`  context: ${record.contextMode || "isolated"}`,
 		`  status: ${status}${activity ? `, doing "${truncate(activity, 40)}"` : ""}`,
-		`  address: ${address}`,
-		`  spawn id: ${record.spawnId.slice(0, 8)}`,
+		said ? `  says: ${said}` : undefined,
+		`  address: id:${shortId(record.spawnId)}`,
 		`  pane: ${paneText(record.placement, alive)}`,
 		`  age: ${ago(record.launchedAt)}`,
 		`  cwd: ${record.cwd}`,
 		`  task: ${truncate(record.task, 100)}`,
-	].join("\n");
+	]
+		.filter((line) => line !== undefined)
+		.join("\n");
 }
 
-function sameProcess(pid: number, birth: string | undefined): boolean {
-	if (!pidAlive(pid)) return false;
-	if (!birth) return true;
-	return pidBirth(pid) === birth;
+function childPid(host: AgentsHost, record: ChildRecord): { pid?: number | undefined; birth?: string | undefined } {
+	return readPidFile(host.paths, record.spawnId) ?? {};
 }
 
-/** Signalling needs a known birth: a recycled pid belongs to an unrelated process. */
-function pidLive(pid: number | undefined, birth: string | undefined): boolean {
-	if (!pid || !birth || !pidAlive(pid)) return false;
-	return pidBirth(pid) === birth;
-}
-
-function pidGone(pid: number | undefined, birth: string | undefined): boolean {
-	if (!pid || !pidAlive(pid)) return true;
-	if (!birth) return false;
-	const current = pidBirth(pid);
-	return !current || current !== birth;
-}
-
-function forgetTracked(host: AgentsHost, record: ChildRecord): void {
-	host.records.forget(record.spawnId);
-	if (record.instanceId && host.bus.started) host.bus.unwatch(record.instanceId);
-}
-
-/** Forget records whose endpoint and process are both confirmed gone. */
-function pruneGoneChildren(host: AgentsHost, includeNeverStarted = false): string[] {
-	if (!host.bus.started) return [];
+/** Forget records whose child is offline and whose process is confirmed gone. */
+function pruneGoneChildren(
+	host: AgentsHost,
+	agents: ReadonlyMap<string, AgentInfo>,
+	includeNeverStarted = false,
+): string[] {
 	const removed: string[] = [];
-	for (const child of host.records.mine(host.bus.owner)) {
-		const state = childStatus(child, peerFor(host, child), endpointChangedPeer(host, child));
-		if (state !== "exited" && !(includeNeverStarted && state === "never-started")) continue;
-		if (!pidGone(child.pid, child.pidBirth)) continue;
-		forgetTracked(host, child);
+	for (const child of myChildren(host)) {
+		const state = childStatus(child, agents.get(child.spawnId));
+		if (state !== "offline" && !(includeNeverStarted && state === "never-started")) continue;
+		const { pid, birth } = childPid(host, child);
+		if (!pidGone(pid, birth)) continue;
+		host.records.forget(child.spawnId);
 		removed.push(child.name);
 	}
 	return removed;
 }
 
-export async function cleanupGoneChild(host: AgentsHost, event: PeerGone): Promise<void> {
-	if (!host.bus.started) return;
-	const record = host.records.mine(host.bus.owner).find((child) => child.instanceId === event.record.instanceId);
+/** A child that went offline: close its pane when its process is gone too. */
+export async function cleanupGoneChild(host: AgentsHost, event: PresenceEvent): Promise<void> {
+	if (event.online || !host.bus.started) return;
+	const record = myChildren(host).find((child) => child.spawnId === event.agent);
 	if (!record) return;
-	// A session replacement can retire the old endpoint before its replacement appears.
-	const current = matchingPeer(host, record);
-	if (current && current.instanceId !== event.record.instanceId) return;
-	const pid = record.pid ?? event.record.pid;
-	const birth = record.pidBirth ?? event.record.pidBirth;
-	// A stopped endpoint is not a stopped process: /new or /resume in the child stops it first.
-	if (event.reason === "left" && pid && sameProcess(pid, birth)) return;
+	const { pid, birth } = childPid(host, record);
+	// Offline is not a stopped process: /new or /resume in the child takes the old session offline first.
+	if (pid && sameProcess(pid, birth)) return;
 	const closed = await host.placer.close(record.placement);
 	const alive = await host.placer.alive(record.placement);
-	if (closed || alive === false || pidGone(pid, birth)) forgetTracked(host, record);
+	if (closed || alive === false || pidGone(pid, birth)) host.records.forget(record.spawnId);
 }
 
-export function rewatchChildren(host: AgentsHost): void {
-	if (!host.bus.started) return;
-	pruneGoneChildren(host);
-	for (const child of host.records.mine(host.bus.owner)) {
-		if (!child.instanceId) {
-			adoptLateChild(host, child);
-			continue;
-		}
-		const peer = peerFor(host, child);
-		if (peer) host.bus.watch(peer);
+/** The temp fork file is needed only until the child read it. */
+export function childOnline(host: AgentsHost, event: PresenceEvent): void {
+	if (!event.online || !host.bus.started) return;
+	const record = myChildren(host).find((child) => child.spawnId === event.agent);
+	if (!record?.forkFile) return;
+	rmSync(record.forkFile, { force: true });
+	record.forkFile = undefined;
+	try {
+		host.records.save(record);
+	} catch {
+		// The record keeps the path; a later save drops it.
 	}
 }
 
@@ -457,14 +394,15 @@ export async function whereAction(host: AgentsHost): Promise<ActionResult> {
 }
 
 export async function listAction(host: AgentsHost): Promise<ActionResult> {
-	if (!host.bus.started) {
-		return { text: "pi-bus is not running, so children cannot be listed or verified.", details: {}, ok: false };
-	}
-	myChildren(host);
-	pruneGoneChildren(host);
-	const children = host.records.mine(host.bus.owner);
+	const reason = host.bus.unavailable();
+	if (reason) return { text: `${reason} Children cannot be listed or verified.`, details: {}, ok: false };
+	const agents = await childAgents(host).catch((error: unknown) => {
+		throw new Error(host.bus.errorText(error), { cause: error });
+	});
+	pruneGoneChildren(host, agents);
+	const children = myChildren(host);
 	if (children.length === 0) return { text: "No children spawned from this session.", details: { count: 0 } };
-	const parts = await Promise.all(children.map((child) => describeChild(host, child)));
+	const parts = await Promise.all(children.map((child) => describeChild(host, child, agents.get(child.spawnId))));
 	return { text: parts.join("\n\n"), details: { count: children.length } };
 }
 
@@ -478,25 +416,31 @@ function childTools(role: Role, tools: string | undefined): string[] | undefined
 	return wanted;
 }
 
-export function buildChildArgs(options: { runtime: ResolvedRuntime; role: Role; sessionFile?: string | undefined }) {
+export function buildChildArgs(options: {
+	runtime: ResolvedRuntime;
+	role: Role;
+	sessionId: string;
+	forkFile?: string | undefined;
+}) {
 	const args: string[] = [];
-	if (options.sessionFile) args.push("--session", options.sessionFile);
+	if (options.forkFile) args.push("--fork", options.forkFile);
+	args.push("--session-id", options.sessionId);
 	if (options.runtime.model) args.push("--model", options.runtime.model);
 	if (options.runtime.thinking) args.push("--thinking", options.runtime.thinking);
 	if (!options.role.mcp) args.push("--no-mcp");
 	return args;
 }
 
-/** A Herdr pane does not inherit the parent env. Without the agent dir, the child joins another bus. */
+/** A Herdr pane does not inherit the parent env. Without the agent dir, the child uses another hub config. */
 export function buildChildEnv(
-	spawnFile: string,
-	busDir: string | undefined,
 	agentDir: string,
 	parentEnv: NodeJS.ProcessEnv = process.env,
+	tempDir: string = tmpdir(),
 ): Record<string, string> {
-	const env: Record<string, string> = { PIMON_SPAWN_FILE: spawnFile };
-	if (busDir) env["PI_BUS_DIR"] = resolve(busDir);
+	const env: Record<string, string> = {};
 	if (parentEnv["PI_CODING_AGENT_DIR"]) env["PI_CODING_AGENT_DIR"] = resolve(agentDir);
+	// A pane gets the env of the Herdr server, not of the parent. The child finds its spawn file under this dir.
+	env["TMPDIR"] = tempDir;
 	return env;
 }
 
@@ -512,22 +456,47 @@ function resolveCwd(ctx: ExtensionContext, requested: string | undefined): strin
 	return cwd;
 }
 
-async function waitForChild(
+function firstLine(text: string, max: number): string {
+	const line = text.split("\n").find((entry) => entry.trim()) ?? "";
+	return truncate(line, max);
+}
+
+/**
+ * Resolves true once the child set its first task to working. The child can start the task before the send
+ * returns its task id, so updates before `known` are kept.
+ */
+function waitForWorking(
 	host: AgentsHost,
-	spawnId: string,
-	spawnFile: string,
 	signal: AbortSignal | undefined,
-): Promise<{ peer?: PeerRecord; taken: boolean }> {
-	const deadline = Date.now() + host.timing.spawnWaitMs;
-	let peer: PeerRecord | undefined;
-	let taken = false;
-	while (true) {
-		peer = host.bus.resolve(`label:spawn=${spawnId}`).find((found) => found.labels["parent"] === host.bus.owner);
-		taken = !existsSync(spawnFile);
-		if ((peer && taken) || Date.now() >= deadline || signal?.aborted) break;
-		await sleep(host.timing.pollMs, signal);
-	}
-	return peer ? { peer, taken } : { taken };
+): { done: Promise<boolean>; stop: () => void; known: (taskId: string) => void } {
+	let stop = () => {};
+	let taskId: string | undefined;
+	const started = new Set<string>();
+	let known = (id: string) => {
+		taskId = id;
+	};
+	const done = new Promise<boolean>((resolveDone) => {
+		const timer = setTimeout(() => finish(false), host.timing.spawnWaitMs);
+		const off = host.bus.onUpdate((update) => {
+			if (update.state === "submitted") return;
+			if (update.taskId === taskId) finish(true);
+			else if (taskId === undefined) started.add(update.taskId);
+		});
+		known = (id) => {
+			taskId = id;
+			if (started.has(id)) finish(true);
+		};
+		const onAbort = () => finish(false);
+		signal?.addEventListener("abort", onAbort, { once: true });
+		function finish(value: boolean) {
+			clearTimeout(timer);
+			off();
+			signal?.removeEventListener("abort", onAbort);
+			resolveDone(value);
+		}
+		stop = () => finish(false);
+	});
+	return { done, stop: () => stop(), known: (id) => known(id) };
 }
 
 export async function spawnAction(
@@ -537,7 +506,7 @@ export async function spawnAction(
 	toolCallId: string,
 	signal?: AbortSignal,
 ): Promise<ActionResult> {
-	const bus = requireBus(host.bus);
+	const bus = requireHub(host.bus);
 	if (!host.placer.inside()) throw new Error(OUTSIDE_HERDR);
 	if (!params.role) throw new Error('pi_agents action="spawn" requires role. Use action="roles" to list them.');
 	if (!params.task) throw new Error('pi_agents action="spawn" requires task.');
@@ -589,45 +558,45 @@ export async function spawnAction(
 		);
 	}
 
-	const spawnId = randomUUID();
-	const controlToken = randomUUID();
-	// Reserved keys go last so nothing can shadow them.
-	const labels = { ...merged, role: role.name, parent: bus.owner, spawn: spawnId, depth: String(depth + 1) };
+	const spawnId = uuidv7();
+	const messageId = randomUUID();
+	// Depth goes last so nothing can shadow it.
+	const labels = { ...merged, depth: String(depth + 1) };
 	const tools = childTools(role, params.tools);
 	const known = new Set(host.pi.getAllTools().map((tool) => tool.name));
 	const unknownTools = (tools ?? []).filter((tool) => !MANDATORY_CHILD_TOOLS.includes(tool) && !known.has(tool));
 	const displayName = params.name || role.name;
+	const hubName = defaultName({ name: params.name, role: role.name }, spawnId);
 	const initialPrompt = buildInitialPrompt(params.task, selectedContext);
 
-	const forkSessionFile =
+	const forkFile =
 		selectedContext.mode === "fork"
 			? createForkSession(ctx.sessionManager.getSessionFile(), ctx.cwd, toolCallId)
 			: undefined;
 	const removeFork = () => {
-		if (forkSessionFile) rmSync(forkSessionFile, { force: true });
+		if (forkFile) rmSync(forkFile, { force: true });
 	};
 
-	let spawnFile: string;
 	let closeHook: string;
 	let placement: Placement;
 	try {
-		spawnFile = writeSpawnFile(host.paths, {
-			version: 1,
+		writeSpawnFile(host.paths, {
+			version: 2,
 			spawnId,
 			role: { name: role.name, prompt: role.prompt },
-			parent: { name: bus.name, owner: bus.owner },
+			parent: { name: bus.name, id: bus.id },
 			child: { name: params.name, labels, tools },
-			controlToken,
-			task: initialPrompt,
+			firstTask: { messageId },
 			createdAt: Date.now(),
 		});
+		await bus.addChild({ id: spawnId, name: hubName, role: role.name, labels, cwd });
 		closeHook = writeCloseHook(host.paths, spawnId);
 		placement = await host.placer.place(
 			{
 				title: displayName,
 				cwd,
-				args: buildChildArgs({ runtime, role, sessionFile: forkSessionFile }),
-				env: buildChildEnv(spawnFile, bus.launch.dir, host.agentDir),
+				args: buildChildArgs({ runtime, role, sessionId: spawnId, forkFile }),
+				env: buildChildEnv(host.agentDir),
 				closeHook,
 			},
 			spawnId,
@@ -635,77 +604,96 @@ export async function spawnAction(
 	} catch (error) {
 		host.records.forget(spawnId);
 		removeFork();
-		throw error;
+		throw new Error(bus.errorText(error), { cause: error });
 	}
 
 	const record: ChildRecord = {
 		spawnId,
-		name: displayName,
+		name: hubName,
 		role: role.name,
 		task: params.task,
 		cwd,
 		placement,
 		launchedAt: Date.now(),
-		launchedBy: bus.owner,
-		controlToken,
+		launchedBy: bus.id,
 		contextMode: selectedContext.mode,
+		forkFile,
 	};
-	const placedMarker = placedMarkerPath(host.paths.spawn, spawnId);
-	const unwind = async (stage: string, error: unknown): Promise<never> => {
-		rmSync(placedMarker, { force: true });
-		// Unwatch first: closing a watched child would report its exit as news.
-		if (record.instanceId) bus.unwatch(record.instanceId);
+	try {
+		host.records.save(record);
+	} catch (error) {
 		const closed = await host.placer.close(placement);
 		if (closed) {
 			host.records.forget(spawnId);
 			removeFork();
 		}
 		throw new Error(
-			`Could not persist ${record.name} ${stage} state: ${(error as Error).message}. ${
+			`Could not persist ${record.name} child state: ${(error as Error).message}. ${
 				closed
 					? "Its pane was closed."
 					: `Its ${placement.kind} pane ${placement.tabId ?? placement.handle} remains open; close it manually.`
 			}`,
 		);
-	};
-	try {
-		writePrivateFile(placedMarker, "");
-	} catch (error) {
-		await unwind("placement", error);
-	}
-	try {
-		host.records.save(record);
-	} catch (error) {
-		await unwind("child", error);
 	}
 
-	const { peer, taken } = await waitForChild(host, spawnId, spawnFile, signal);
-	if (peer) {
-		// Adopt the name the child claimed, so later lookups match.
-		record.name = peer.name;
-		record.instanceId = peer.instanceId;
-		record.pid = peer.pid;
-		record.pidBirth = peer.pidBirth;
+	let taskId: string | undefined;
+	const working = waitForWorking(host, signal);
+	let delivery: "delivered" | "queued" | "unconfirmed" | "failed";
+	let failure: string | undefined;
+	let unconfirmedWhy: string | undefined;
+	try {
+		const sent = await bus.send([childStub(spawnId, hubName)], {
+			messageId,
+			body: initialPrompt,
+			kind: "task",
+			wake: "now",
+			subject: firstLine(params.task, 80),
+		});
+		const line = sent.lines[0];
+		delivery = line?.state ?? "failed";
+		if (line?.state === "failed") failure = line.reason;
+		if (line?.state === "unconfirmed") unconfirmedWhy = line.reason;
+		taskId = line?.taskId;
+	} catch (error) {
+		delivery = "failed";
+		failure = bus.errorText(error);
+	}
+	if (taskId) {
+		working.known(taskId);
+		record.taskId = taskId;
 		try {
 			host.records.save(record);
-		} catch (error) {
-			await unwind("endpoint", error);
+		} catch {
+			// The task id is only a hint for later views.
 		}
-		bus.watch(peer);
 	}
+	const started = delivery === "failed" ? (working.stop(), false) : await working.done;
+	if (started) childOnline(host, { agent: spawnId, name: hubName, online: true, relation: "child" });
 
-	const delivered = Boolean(peer) && taken;
 	const waitSeconds = Math.round(host.timing.spawnWaitMs / 1000);
 	const runtimeNote = formatRuntime(runtime);
+	const taskLine = started
+		? "Task delivered."
+		: delivery === "failed"
+			? `Task not sent: ${failure ?? "unknown error"}. The pane stays open for inspection.`
+			: delivery === "delivered"
+				? `Task delivered; the child has not started it after ${waitSeconds}s.`
+				: delivery === "unconfirmed"
+					? `Task unconfirmed: ${
+							unconfirmedWhy === NO_ANSWER
+								? "the hub did not answer"
+								: (unconfirmedWhy ?? "the child did not confirm it yet")
+						}. Do not resend; check the child with action="probe".`
+					: "Task queued: the hub delivers it when the child links.";
+	// A child that acked the task was online. A failed send ended the wait before it began.
+	const linked = started || delivery === "delivered" || delivery === "failed";
 	const lines = [
 		`Started: ${record.name} (${role.name}, ${placement.kind} ${placement.layout}).`,
 		found.prefix ? `Role: "${params.role}" matched ${role.name}.` : undefined,
 		runtimeNote ? `Runtime: ${runtimeNote}.` : "Runtime: default model.",
 		`Context: ${selectedContext.mode}.`,
-		peer ? `Bus: owner:${shortId(peer.owner)}.` : `Bus: not visible after ${waitSeconds}s.`,
-		delivered
-			? "Task delivered."
-			: "Task unconfirmed: the child has not read its spawn file. The pane stays open for inspection.",
+		linked ? `Bus: id:${shortId(spawnId)}.` : `Bus: id:${shortId(spawnId)}, not online after ${waitSeconds}s.`,
+		taskLine,
 		unknownTools.length > 0
 			? `Warning: these allowlist tools are not registered here: ${unknownTools.join(", ")}.`
 			: undefined,
@@ -715,84 +703,104 @@ export async function spawnAction(
 		details: {
 			spawnId,
 			placement,
-			owner: peer?.owner,
-			instanceId: peer?.instanceId,
 			contextMode: selectedContext.mode,
-			taskDelivery: delivered ? "delivered" : "unconfirmed",
+			taskDelivery: started ? "delivered" : delivery,
 		},
-		ok: delivered,
+		ok: started,
+	};
+}
+
+function childStub(id: string, name: string): AgentInfo {
+	return {
+		id,
+		name,
+		kind: "pi",
+		host: null,
+		cwd: null,
+		role: null,
+		labels: {},
+		parent: null,
+		topics: [],
+		online: false,
+		state: "idle",
+		activity: null,
+		status: { text: "", at: null },
+		lastSeenAt: null,
 	};
 }
 
 export async function probeAction(host: AgentsHost, agent: string | undefined): Promise<ActionResult> {
 	const record = resolveChild(host, agent);
-	const peer = peerFor(host, record);
-	const probes = peer ? await host.bus.probe(`id:${peer.instanceId}`) : [];
-	const probe = probes[0];
-	const { controlToken: _token, ...visible } = record;
-	const line = probe
-		? `  probe: ${probe.alive ? "answered" : "no answer"}${probe.rttMs !== undefined ? ` in ${probe.rttMs}ms` : ""}${probe.reason ? ` (${probe.reason})` : ""}`
-		: "  probe: not on the bus";
-	return { text: `${await describeChild(host, record)}\n${line}`, details: { record: visible, probe } };
+	let row: AgentInfo | undefined;
+	try {
+		row = await host.bus.agent(record.spawnId);
+	} catch (error) {
+		throw new Error(host.bus.errorText(error), { cause: error });
+	}
+	const line = row
+		? `  hub: ${row.online ? "online" : "offline"}${row.lastSeenAt ? `, seen ${ago(Date.parse(row.lastSeenAt))} ago` : ", never linked"}`
+		: "  hub: no row for this child";
+	return {
+		text: `${await describeChild(host, record, row)}\n${line}`,
+		details: { record, online: row?.online ?? false },
+	};
 }
 
-function endpointChanged(record: ChildRecord, verb: string, changed: PeerRecord): ActionResult {
+async function closePaneOnly(host: AgentsHost, record: ChildRecord): Promise<ActionResult> {
+	const paneClosed = await host.placer.close(record.placement);
+	const managed = record.placement.kind === "herdr";
+	const alive = await host.placer.alive(record.placement);
+	const { pid, birth } = childPid(host, record);
+	const gone = paneClosed || (alive !== true && pidGone(pid, birth));
+	if (gone) host.records.forget(record.spawnId);
+	const outcome = paneClosed
+		? "Closed its pane."
+		: gone
+			? "It was already gone; removed its stale record."
+			: managed
+				? "Could not close its pane; the record stays for manual resolution."
+				: `Its ${record.placement.kind} pane is not managed; the record stays for manual resolution.`;
 	return {
-		text: `${record.name} cannot be ${verb} automatically: its endpoint changed after a child reload. Child reload is unsupported; close its ${record.placement.kind} pane manually.`,
-		details: { spawnId: record.spawnId, endpointChanged: true, owner: changed.owner },
-		ok: false,
+		text: `${record.name} is not online. ${outcome}`,
+		details: { spawnId: record.spawnId, closed: gone, paneClosed },
+		ok: gone,
 	};
 }
 
 export async function closeAction(host: AgentsHost, agent: string | undefined): Promise<ActionResult> {
-	const bus = requireBus(host.bus);
+	const bus = requireHub(host.bus);
 	const record = resolveChild(host, agent);
-	const changed = endpointChangedPeer(host, record);
-	if (changed) return endpointChanged(record, "closed", changed);
-	const peer = peerFor(host, record);
-	if (!peer) {
-		const paneClosed = await host.placer.close(record.placement);
-		const managed = record.placement.kind === "herdr";
-		const alive = await host.placer.alive(record.placement);
-		const gone = paneClosed || (alive !== true && pidGone(record.pid, record.pidBirth));
-		if (gone) forgetTracked(host, record);
-		const outcome = paneClosed
-			? "Closed its pane."
-			: gone
-				? "It was already gone; removed its stale record."
-				: managed
-					? "Could not close its pane; the record stays for manual resolution."
-					: `Its ${record.placement.kind} pane is not managed; the record stays for manual resolution.`;
-		return {
-			text: `${record.name} is not on the bus. ${outcome}`,
-			details: { spawnId: record.spawnId, closed: gone, paneClosed },
-			ok: gone,
-		};
-	}
-	// Marked first: an idle child can stop before the delivery result returns. A crash still wakes.
-	const cancelExpectation = bus.expectExit(peer.owner, ["left"]);
-	let result: SendResult;
+	let row: AgentInfo | undefined;
 	try {
-		result = await bus.sendTo(peer, {
-			body: "shutdown",
-			subject: "shutdown",
-			kind: "control",
-			wake: "now",
-			priority: "urgent",
-			data: { token: record.controlToken },
-		});
+		row = await bus.agent(record.spawnId);
+	} catch (error) {
+		throw new Error(bus.errorText(error), { cause: error });
+	}
+	if (!row?.online) return closePaneOnly(host, record);
+	// Marked first: an idle child can stop before the answer returns. Open work still wakes.
+	const cancelExpectation = bus.expectOffline(record.spawnId);
+	try {
+		await bus.close(record.spawnId);
 	} catch (error) {
 		cancelExpectation();
-		throw error;
+		if (error instanceof HubHttpError && error.status === 409) return closePaneOnly(host, record);
+		if (error instanceof HubHttpError && error.status === 403) {
+			return {
+				text: `Could not close ${record.name}: the hub does not list this session as its parent.`,
+				details: { delivered: false },
+				ok: false,
+			};
+		}
+		return {
+			text: `Could not deliver the close request to ${record.name}: ${bus.errorText(error)}`,
+			details: { delivered: false },
+			ok: false,
+		};
 	}
-	const accepted = result.delivered.length > 0;
-	if (!accepted) cancelExpectation();
 	return {
-		text: accepted
-			? `Asked ${record.name} to finish and exit. It shuts down once it is idle, so a final report may still arrive. Use action="kill" if it does not stop.`
-			: `Could not deliver the close request to ${record.name}: ${[...result.unknown, ...result.failed].map((entry) => entry.reason).join(", ") || "no live target"}.`,
-		details: { delivered: accepted },
-		ok: accepted,
+		text: `Asked ${record.name} to finish and exit. It shuts down once it is idle, so a final report may still arrive. Use action="kill" if it does not stop.`,
+		details: { delivered: true },
+		ok: true,
 	};
 }
 
@@ -800,11 +808,9 @@ export async function closeAction(host: AgentsHost, agent: string | undefined): 
 async function stopChild(
 	host: AgentsHost,
 	record: ChildRecord,
-	peer: PeerRecord | undefined,
 ): Promise<{ state: "dead" | "alive" | "unknown"; notes: string[] }> {
 	const notes: string[] = [];
-	const pid = peer?.pid ?? record.pid;
-	const birth = record.pidBirth ?? peer?.pidBirth;
+	const { pid, birth } = childPid(host, record);
 	if (!pid) {
 		notes.push("no pid was recorded: process state unknown");
 		return { state: "unknown", notes };
@@ -835,15 +841,12 @@ export async function killAction(
 	agent: string | undefined,
 	force: boolean | undefined,
 ): Promise<ActionResult> {
-	requireBus(host.bus);
+	requireHub(host.bus);
 	const record = resolveChild(host, agent);
-	const changed = endpointChangedPeer(host, record);
-	if (changed) return endpointChanged(record, "killed", changed);
-	const peer = peerFor(host, record);
-	// Marked first: SIGTERM makes the child stop its endpoint during the grace wait.
-	const cancelExpectation = peer ? host.bus.expectExit(peer.owner) : undefined;
-	const { state, notes } = await stopChild(host, record, peer);
-	if (state !== "dead") cancelExpectation?.();
+	// Marked first: SIGTERM takes the child offline during the grace wait.
+	const cancelExpectation = host.bus.expectOffline(record.spawnId);
+	const { state, notes } = await stopChild(host, record);
+	if (state !== "dead") cancelExpectation();
 	let paneClosed = false;
 	if (force !== false) {
 		if (record.placement.kind !== "herdr") notes.push(`its ${String(record.placement.kind)} pane is not managed`);
@@ -852,9 +855,9 @@ export async function killAction(
 			notes.push(paneClosed ? "closed the pane" : "no pane left to close");
 		}
 	}
-	// Forgetting a live child silently ends its exit notices and its ownership record.
+	// Forgetting a live child silently ends its offline notices and its ownership record.
 	const forget = state === "dead" || (state === "unknown" && paneClosed);
-	if (forget) forgetTracked(host, record);
+	if (forget) host.records.forget(record.spawnId);
 	const text =
 		state === "dead"
 			? `Killed ${record.name}: ${notes.join(", ")}.`
@@ -878,8 +881,12 @@ export async function focusAction(host: AgentsHost, agent: string | undefined): 
 	};
 }
 
-export function pruneAction(host: AgentsHost): ActionResult {
-	const removed = pruneGoneChildren(host, true);
+export async function pruneAction(host: AgentsHost): Promise<ActionResult> {
+	requireHub(host.bus);
+	const agents = await childAgents(host).catch((error: unknown) => {
+		throw new Error(host.bus.errorText(error), { cause: error });
+	});
+	const removed = pruneGoneChildren(host, agents, true);
 	return { text: removed.length === 0 ? "Nothing to prune." : `Forgot: ${removed.join(", ")}`, details: { removed } };
 }
 
@@ -918,8 +925,16 @@ export async function runToolAction(
 
 export function pruneFiles(paths: AgentPaths, keepRoleKey: string): void {
 	pruneOld(paths.roles, keepRoleKey);
+	const records = new ChildRecords(paths);
+	// pimon 1.x keyed records on a process owner id and stored a control token. No session id matches them.
+	// A 1.x parent can still run on this host during an upgrade, so its records get a day.
+	const cutoff = Date.now() - DAY_MS;
+	for (const record of records.all()) {
+		if ("controlToken" in record && record.launchedAt < cutoff) records.forget(record.spawnId);
+	}
 	// pi loads the close hook again at each session replacement in the child.
-	const recorded = new Set(new ChildRecords(paths).all().map((record) => record.spawnId));
+	const recorded = new Set(records.all().map((record) => record.spawnId));
 	pruneOld(paths.prompts, undefined, (entry) => recorded.has(entry.replace(/-herdr-close\.ts$/, "")));
-	pruneOld(paths.spawn);
+	// A child's pid file lives as long as the child. Unread spawn data of a never started child goes after a day.
+	pruneOld(paths.spawn, undefined, (entry) => entry.endsWith(".pid") && recorded.has(entry.slice(0, -4)));
 }

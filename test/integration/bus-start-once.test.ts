@@ -1,80 +1,152 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { rmSync, writeFileSync } from "node:fs";
+import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { defineFeature } from "../../src/core/feature.ts";
 import { clearReloadState } from "../../src/core/reload-state.ts";
-import { bus, type BusService } from "../../src/features/bus/index.ts";
+import { bus } from "../../src/features/bus/index.ts";
+import { startHub } from "../../src/hub/server.ts";
+import { busCapture, until } from "../support/bus.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
+import { startTestHub, type TestHub, tokenSpec, writeHubConfig } from "../support/hub.ts";
 
-let service: BusService | undefined;
-const capture = defineFeature({
-	id: "bus-capture",
-	description: "test feature that captures the bus service",
-	defaultEnabled: true,
-	dependsOn: ["bus"],
-	setup(ctx) {
-		service = ctx.service("bus");
-	},
-});
+const capture = busCapture();
 
-async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (!check()) {
-		if (Date.now() > deadline) throw new Error("condition not met in time");
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-}
-
-describe("bus start after a failure", () => {
+describe("bus start and hub reachability", () => {
 	let harness: Harness | undefined;
+	let hub: TestHub | undefined;
+	let restarted: Awaited<ReturnType<typeof startHub>> | undefined;
 	beforeEach(() => {
 		clearReloadState();
 	});
 	afterEach(async () => {
-		service = undefined;
+		capture.reset();
 		await harness?.shutdown();
 		harness?.dispose();
 		harness = undefined;
+		await hub?.close();
+		hub = undefined;
+		await restarted?.close();
+		restarted = undefined;
 		clearReloadState();
 	});
 
-	it("tries once per session start, not again on each prompt", async () => {
+	it("refuses a token file that others can read, once per session start, not again on each prompt", async () => {
+		hub = await startTestHub();
+		const url = hub.url;
 		harness = await createHarness({
-			features: [bus, capture],
+			features: [bus, capture.feature],
 			ui: {},
-			setupAgentDir: (agentDir) => writeFileSync(join(agentDir, "bus"), "not a dir"),
+			setupAgentDir: (agentDir) => {
+				writeHubConfig(agentDir, url);
+				chmodSync(join(agentDir, "pimon-hub.token"), 0o644);
+			},
 		});
 		const h = harness;
-		const failures = () => h.notifications.filter((entry) => entry.message.startsWith("pi-bus failed to start")).length;
-		const busDiagnostics = () => h.runtime.diagnostics().filter((entry) => entry.feature === "bus").length;
+		const failures = () => h.notifications.filter((entry) => entry.message.includes("mode 0600")).length;
 		await until(() => failures() === 1);
-		expect(busDiagnostics()).toBe(1);
+		expect(capture.get().started).toBe(false);
 
-		h.respond([
-			fauxAssistantMessage(fauxText("a")),
-			fauxAssistantMessage(fauxText("b")),
-			fauxAssistantMessage(fauxText("c")),
-		]);
-		for (const text of ["one", "two", "three"]) await h.session.prompt(text);
-		expect(h.requests).toHaveLength(3);
+		h.respond([fauxAssistantMessage(fauxText("a")), fauxAssistantMessage(fauxText("b"))]);
+		for (const text of ["one", "two"]) await h.session.prompt(text);
 		expect(failures()).toBe(1);
-		expect(busDiagnostics()).toBe(1);
+		expect(hub.running.hub.engine.listAgents(true)).toEqual([]);
 
-		rmSync(join(h.agentDir, "bus"));
+		chmodSync(join(h.agentDir, "pimon-hub.token"), 0o600);
 		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
-		await until(() => service?.started === true);
+		await until(() => capture.get().online);
 		expect(failures()).toBe(1);
 	});
 
 	it("starts the bus at the first prompt when a reload sends no session start", async () => {
-		harness = await createHarness({ features: [bus, capture], hostBindings: false });
+		hub = await startTestHub();
+		const url = hub.url;
+		harness = await createHarness({
+			features: [bus, capture.feature],
+			hostBindings: false,
+			setupAgentDir: (agentDir) => writeHubConfig(agentDir, url),
+		});
 		const h = harness;
 		h.respond([fauxAssistantMessage(fauxText("a"))]);
 		await h.session.reload();
-		expect(service?.started).toBe(false);
+		expect(capture.get().started).toBe(false);
 
 		await h.session.prompt("one");
-		expect(service?.started).toBe(true);
+		expect(capture.get().started).toBe(true);
 	});
+
+	it("warns once while the hub is down and links when it is back", async () => {
+		hub = await startTestHub();
+		const { url, running } = hub;
+		const port = running.port;
+		await hub.close();
+		hub = undefined;
+		harness = await createHarness({
+			features: [bus, capture.feature],
+			ui: {},
+			setupAgentDir: (agentDir) => writeHubConfig(agentDir, url),
+		});
+		const h = harness;
+		await until(() => h.notifications.some((entry) => entry.message.includes("unreachable, retrying")));
+		await h.session.prompt("/bus");
+		expect(h.notifications.at(-1)?.message.split("\n")[0]).toBe("bus: hub offline");
+
+		restarted = await startHub({
+			listen: `127.0.0.1:${port}`,
+			dataDir: ":memory:",
+			tokens: tokenSpec(),
+			heartbeatMs: 60_000,
+			log: () => {},
+		});
+		await until(() => capture.get().online, 10_000);
+		expect(h.notifications.filter((entry) => entry.message.includes("unreachable, retrying"))).toHaveLength(1);
+		expect(h.notifications.some((entry) => entry.message.includes("is reachable again"))).toBe(true);
+		expect(h.requests).toHaveLength(0);
+	});
+
+	it("shows a short link drop only in the status, without a warning", async () => {
+		hub = await startTestHub();
+		const { url, running } = hub;
+		harness = await createHarness({
+			features: [bus, capture.feature],
+			ui: {},
+			setupAgentDir: (agentDir) => writeHubConfig(agentDir, url),
+		});
+		const h = harness;
+		await until(() => capture.get().online, 10_000);
+		await hub.close();
+		hub = undefined;
+		restarted = await startHub({
+			listen: `127.0.0.1:${running.port}`,
+			dataDir: ":memory:",
+			tokens: tokenSpec(),
+			heartbeatMs: 60_000,
+			log: () => {},
+		});
+		await until(() => !capture.get().online, 5_000);
+		await until(() => capture.get().online, 10_000);
+		expect(h.notifications.filter((entry) => entry.message.includes("unreachable"))).toEqual([]);
+		expect(h.notifications.filter((entry) => entry.message.includes("reachable again"))).toEqual([]);
+	});
+
+	it("warns once after three failed attempts of a link that was online", async () => {
+		hub = await startTestHub();
+		const { url } = hub;
+		harness = await createHarness({
+			features: [bus, capture.feature],
+			ui: {},
+			setupAgentDir: (agentDir) => writeHubConfig(agentDir, url),
+		});
+		const h = harness;
+		await until(() => capture.get().online, 10_000);
+		await hub.close();
+		hub = undefined;
+		await until(() => !capture.get().online, 5_000);
+		const warnings = () => h.notifications.filter((entry) => entry.message.includes("unreachable, retrying"));
+		// The backoff waits 1 s and then 2 s before the third attempt.
+		await new Promise((resolve) => setTimeout(resolve, 800));
+		expect(warnings()).toEqual([]);
+		await until(() => warnings().length > 0, 15_000);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(warnings()).toHaveLength(1);
+	}, 30_000);
 });

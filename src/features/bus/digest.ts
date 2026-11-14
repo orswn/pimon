@@ -1,7 +1,5 @@
-import type { Envelope, PendingQuestion } from "./protocol.ts";
-import { shortId } from "./protocol.ts";
-import type { QueuedDigest } from "./queue.ts";
-import type { BusStore } from "./store.ts";
+import type { PendingResult } from "../../hub/protocol.ts";
+import { type BusMessage, senderText, shortId, withoutAskedTasks } from "./protocol.ts";
 
 // Bound digests before injection. Compaction owns history reduction after delivery.
 export const MAX_DIGEST_ITEMS = 8;
@@ -10,11 +8,20 @@ const MAX_DIGEST_BODY_BYTES = 4_000;
 export const MAX_STATE_ITEMS = 10;
 export const MAX_STATE_CHARS = 1_500;
 
+/** Messages and notices that wait for the debounced digest. */
+export interface QueuedDigest {
+	messages: BusMessage[];
+	notices: string[];
+}
+
 interface RenderedDigest {
 	text: string;
-	included: Envelope[];
-	omitted: Envelope[];
+	included: BusMessage[];
+	omitted: BusMessage[];
 }
+
+/** Titles of messages this session sent, by message id and task id, so an answer can name its question. */
+export type SentTitles = ReadonlyMap<string, string>;
 
 export function truncate(value: string, max = 200): string {
 	const flat = value.replace(/\s+/g, " ").trim();
@@ -35,44 +42,38 @@ export function ago(timestamp: number, now = Date.now()): string {
 	return `${Math.round(seconds / 3600)}h`;
 }
 
-/** `owner:<12 hex>`, or `id:<12 hex>` for a sender without an owner. */
-export function ownerRef(peer: { owner?: string | undefined; instanceId: string }): string {
-	return peer.owner ? `owner:${shortId(peer.owner)}` : `id:${shortId(peer.instanceId)}`;
-}
-
-function threadTitle(store: BusStore, threadId: string, fallback: Envelope[]): string {
-	const thread = store.thread(threadId);
-	const source = thread.length > 0 ? thread : fallback;
-	const first = source.find((envelope) => envelope.kind !== "event");
+function threadTitle(messages: BusMessage[], sent: SentTitles): string {
+	const first = messages.find((message) => message.kind !== "event");
 	if (!first) return "untitled thread";
-	return truncate(first.subject || first.body, 70);
+	const asked = (first.replyTo && sent.get(first.replyTo)) || (first.taskId && sent.get(first.taskId));
+	return truncate(first.subject || asked || first.body, 70);
 }
 
-/** Renders under an item and a byte budget. Omitted envelopes stay unread and are counted. */
-export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDigest {
+/** Renders under an item and a byte budget. Omitted messages stay unread and are counted. */
+export function renderDigest(queued: QueuedDigest, sent: SentTitles = new Map()): RenderedDigest {
 	const lines: string[] = [];
-	const included: Envelope[] = [];
-	const omitted: Envelope[] = [];
-	const groups = new Map<string, Envelope[]>();
-	for (const envelope of queued.envelopes)
-		groups.set(envelope.threadId, [...(groups.get(envelope.threadId) ?? []), envelope]);
+	const included: BusMessage[] = [];
+	const omitted: BusMessage[] = [];
+	const groups = new Map<string, BusMessage[]>();
+	for (const message of queued.messages)
+		groups.set(message.threadId, [...(groups.get(message.threadId) ?? []), message]);
 
 	let bytes = 0;
 	let full = false;
-	for (const [threadId, envelopes] of groups) {
-		const title = threadTitle(store, threadId, envelopes);
+	for (const [threadId, messages] of groups) {
+		const title = threadTitle(messages, sent);
 		const header = [`Thread: ${title}`, `threadId: ${shortId(threadId)}`];
 		let headerWritten = false;
-		for (const envelope of envelopes) {
+		for (const message of messages) {
 			if (full || included.length >= MAX_DIGEST_ITEMS) {
-				omitted.push(envelope);
+				omitted.push(message);
 				full = true;
 				continue;
 			}
-			const block = renderItem(store, envelope, title);
+			const block = renderItem(message, title, sent);
 			const cost = Buffer.byteLength([...(headerWritten ? [] : header), ...block].join("\n"), "utf8");
 			if (bytes + cost > MAX_DIGEST_BYTES && included.length > 0) {
-				omitted.push(envelope);
+				omitted.push(message);
 				full = true;
 				continue;
 			}
@@ -82,7 +83,7 @@ export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDig
 			}
 			lines.push(...block);
 			bytes += cost;
-			included.push(envelope);
+			included.push(message);
 		}
 		if (headerWritten) lines.push("");
 	}
@@ -92,40 +93,44 @@ export function renderDigest(store: BusStore, queued: QueuedDigest): RenderedDig
 	return { text: lines.join("\n").trim(), included, omitted };
 }
 
-function renderItem(store: BusStore, envelope: Envelope, title: string): string[] {
-	const answers = envelope.corrId ? store.byExactId(envelope.corrId) : undefined;
-	const answering = answers ? ` answering your "${truncate(answers.subject || answers.body, 40)}"` : "";
-	const cut = Buffer.byteLength(envelope.body, "utf8") > MAX_DIGEST_BODY_BYTES;
+function renderItem(message: BusMessage, title: string, sent: SentTitles): string[] {
+	const question = message.replyTo ? sent.get(message.replyTo) : undefined;
+	const answering = question ? ` answering your "${truncate(question, 40)}"` : "";
+	const state = message.taskState && message.taskState !== "submitted" ? ` task ${message.taskState}` : "";
+	const cut = Buffer.byteLength(message.body, "utf8") > MAX_DIGEST_BODY_BYTES;
 	const body = cut
-		? `${envelope.body.slice(0, MAX_DIGEST_BODY_BYTES)}\n[truncated; read it with action="read"]`
-		: envelope.body;
+		? `${message.body.slice(0, MAX_DIGEST_BODY_BYTES)}\n[truncated; read it with action="read"]`
+		: message.body;
 	return [
-		`- ${envelope.kind} from ${envelope.from.name} ${ownerRef(envelope.from)} messageId=${shortId(envelope.id)}${answering}:`,
-		envelope.subject && envelope.subject !== title ? indent(`subject: ${envelope.subject}`) : undefined,
+		`- ${message.kind} from ${senderText(message.from)} messageId=${shortId(message.id)}${state}${answering}:`,
+		message.subject && message.subject !== title ? indent(`subject: ${message.subject}`) : undefined,
 		indent(body),
-		envelope.data === undefined ? undefined : indent(`data: ${truncate(JSON.stringify(envelope.data), 400)}`),
+		message.data === undefined ? undefined : indent(`data: ${truncate(JSON.stringify(message.data), 400)}`),
 	].filter((line): line is string => Boolean(line));
 }
 
-/** Open work that a compaction summary drops: unread count, pending questions, unanswered inbound questions. */
-export function renderOpenState(
-	unread: number,
-	pending: PendingQuestion[],
-	unanswered: Envelope[],
-): string | undefined {
-	if (unread === 0 && pending.length === 0 && unanswered.length === 0) return undefined;
+/** Open work that a compaction summary drops: unread count, what this session waits for, and what it owes. */
+export function renderOpenState(unread: number, rawPending: PendingResult, rawOwed: PendingResult): string | undefined {
+	const pending = withoutAskedTasks(rawPending);
+	const owed = withoutAskedTasks(rawOwed);
 	const items = [
-		...pending.map((entry) => {
-			const owners = entry.targets
-				.filter((target) => !target.answered && !target.gone)
-				.map((target) => (target.owner ? `owner:${shortId(target.owner)}` : target.name));
-			return `- Pending question messageId=${shortId(entry.envelopeId)} to ${owners.join(", ") || entry.to}: ${truncate(entry.subject || entry.body, 60)}`;
-		}),
-		...unanswered.map(
-			(envelope) =>
-				`- Unanswered question messageId=${shortId(envelope.id)} from ${envelope.from.name} ${ownerRef(envelope.from)}: ${truncate(envelope.subject || envelope.body, 60)}`,
+		...pending.expectReply.map(
+			(entry) => `- Pending question messageId=${shortId(entry.messageId)} to ${entry.name} id:${shortId(entry.agent)}`,
+		),
+		...pending.tasks.map(
+			(task) =>
+				`- Pending task ${shortId(task.taskId)} to ${task.name}${task.agent ? ` id:${shortId(task.agent)}` : ""}: ${task.state}`,
+		),
+		...owed.expectReply.map(
+			(entry) =>
+				`- Unanswered question messageId=${shortId(entry.messageId)} from ${entry.name} id:${shortId(entry.agent)}`,
+		),
+		...owed.tasks.map(
+			(task) =>
+				`- Open task ${shortId(task.taskId)} from ${task.name}${task.agent ? ` id:${shortId(task.agent)}` : ""}: ${task.state}`,
 		),
 	];
+	if (unread === 0 && items.length === 0) return undefined;
 	const head = `Bus state kept across compaction. Unread messages: ${unread}.`;
 	const lines = [head];
 	let size = head.length;

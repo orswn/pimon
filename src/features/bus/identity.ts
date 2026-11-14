@@ -1,41 +1,33 @@
-import { randomUUID } from "node:crypto";
-import { shortId } from "./protocol.ts";
-import { parseLabels, sanitizeName, sessionTag, shortHost } from "./registry.ts";
+import { createHash } from "node:crypto";
+import { hostname } from "node:os";
 
 /** Values read from the environment once, at the first load in this process. */
 export interface LaunchEnv {
-	owner?: string | undefined;
 	name?: string | undefined;
 	labels?: string | undefined;
 	role?: string | undefined;
 	parent?: string | undefined;
 	team?: string | undefined;
-	controlToken?: string | undefined;
 	control?: string | undefined;
 	wakePolicy?: string | undefined;
 	debug?: string | undefined;
-	dir?: string | undefined;
-	agentLabel?: string | undefined;
-	spawnFile?: string | undefined;
 }
 
 const SOURCES = {
-	owner: "PI_BUS_OWNER",
 	name: "PI_BUS_NAME",
 	labels: "PI_BUS_LABELS",
 	role: "PI_BUS_ROLE",
 	parent: "PI_BUS_PARENT",
 	team: "PI_BUS_TEAM",
-	controlToken: "PI_BUS_CONTROL_TOKEN",
 	control: "PI_BUS_CONTROL",
 	wakePolicy: "PI_BUS_WAKE_POLICY",
 	debug: "PI_BUS_DEBUG",
-	dir: "PI_BUS_DIR",
-	agentLabel: "PI_AGENT_LABEL",
-	spawnFile: "PIMON_SPAWN_FILE",
 } as const satisfies Record<keyof LaunchEnv, string>;
 
-/** Identity keys leave the process env, so bash, background jobs, and nested pi do not inherit them. */
+/**
+ * Identity keys leave the process env, so bash, background jobs, and nested pi do not inherit them.
+ * Keys of earlier versions stay in the list, so an old parent's env does not leak into this process's children.
+ */
 const DELETED_ENV_KEYS = [
 	"PI_BUS_OWNER",
 	"PI_BUS_NAME",
@@ -44,6 +36,7 @@ const DELETED_ENV_KEYS = [
 	"PI_BUS_PARENT",
 	"PI_BUS_TEAM",
 	"PI_BUS_CONTROL_TOKEN",
+	"PI_BUS_DIR",
 	"PI_AGENT_LABEL",
 	"PI_AGENTS_TOOLS",
 	"PIMON_SPAWN_FILE",
@@ -62,40 +55,74 @@ export function deleteIdentityEnv(env: NodeJS.ProcessEnv): void {
 	for (const key of DELETED_ENV_KEYS) delete env[key];
 }
 
-export function adoptOwner(launch: LaunchEnv): string {
-	return launch.owner || randomUUID();
+export function sanitizeName(raw: string): string {
+	const cleaned = (raw || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9._-]+/g, "-")
+		.replace(/^[-.]+|[-.]+$/g, "")
+		.slice(0, 40);
+	return cleaned || "pi";
 }
 
-export function busLabels(launch: LaunchEnv, cwd: string | undefined): Record<string, string> {
-	const labels: Record<string, string> = { ...parseLabels(launch.labels) };
-	if (launch.role) labels["role"] = launch.role;
-	if (launch.parent) labels["parent"] = launch.parent;
-	if (launch.team) labels["team"] = launch.team;
-	if (cwd) labels["cwd"] = cwd;
+export function shortHost(): string {
+	return sanitizeName(hostname().split(".")[0] || "host");
+}
+
+export function parseLabels(raw: string | undefined): Record<string, string> {
+	const labels: Record<string, string> = {};
+	if (!raw) return labels;
+	for (const pair of raw.split(/[,\s]+/)) {
+		if (!pair) continue;
+		const eq = pair.indexOf("=");
+		if (eq <= 0) continue;
+		const key = pair.slice(0, eq).trim();
+		const value = pair.slice(eq + 1).trim();
+		if (key && value) labels[key] = value;
+	}
 	return labels;
 }
 
-/** `<host>-<session tag>`, or `<role>-<session tag>` for a delegated instance. Stable across reload and resume. */
+export function formatLabels(labels: Record<string, string>): string {
+	return Object.entries(labels)
+		.map(([key, value]) => `${key}=${value}`)
+		.join(",");
+}
+
+/** First hex of sha256 of the session id. Earlier versions hashed the same id from the session file name. */
+export function sessionTag(sessionId: string, width = 6): string {
+	return createHash("sha256").update(sessionId).digest("hex").slice(0, width);
+}
+
+/** Labels from the env. Role and parent are separate hub fields. */
+export function busLabels(launch: LaunchEnv): Record<string, string> {
+	const labels: Record<string, string> = { ...parseLabels(launch.labels) };
+	if (launch.team) labels["team"] = launch.team;
+	return labels;
+}
+
+/**
+ * `PI_BUS_NAME`, then the session name, then `<role>-<tag>` for a delegated instance, else `<host>-<tag>`.
+ * Stable across reload and resume.
+ */
 export function defaultName(
-	launch: LaunchEnv,
-	sessionFile: string | undefined,
-	owner: string,
+	options: { name?: string | undefined; sessionName?: string | undefined; role?: string | undefined },
+	sessionId: string,
 	host = shortHost(),
 ): string {
-	if (launch.name) return sanitizeName(launch.name);
-	const tag = sessionTag(sessionFile) || `x${shortId(owner).slice(0, 5)}`;
-	return `${launch.role ? sanitizeName(launch.role) : host}-${tag}`;
+	if (options.name) return sanitizeName(options.name);
+	if (options.sessionName) return sanitizeName(options.sessionName);
+	return `${options.role ? sanitizeName(options.role) : host}-${sessionTag(sessionId)}`;
 }
 
 export type WakePolicy = "all" | "parent" | "none";
-export type ControlPolicy = "parent" | "any" | "none";
+export type ControlPolicy = "parent" | "none";
 
 export function wakePolicyOf(launch: LaunchEnv): WakePolicy {
 	const raw = (launch.wakePolicy || "all").toLowerCase();
 	return raw === "parent" || raw === "none" ? raw : "all";
 }
 
+/** `any` reads as `parent`: the hub forwards a close only from the parent. */
 export function controlPolicyOf(launch: LaunchEnv): ControlPolicy {
-	const raw = (launch.control || "parent").toLowerCase();
-	return raw === "any" || raw === "none" ? raw : "parent";
+	return (launch.control || "parent").toLowerCase() === "none" ? "none" : "parent";
 }

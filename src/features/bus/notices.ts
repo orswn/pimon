@@ -1,82 +1,74 @@
-import { ago, ownerRef, truncate } from "./digest.ts";
+import type { PendingResult, PresenceEvent } from "../../hub/protocol.ts";
+import { ago } from "./digest.ts";
 import type { WakePolicy } from "./identity.ts";
-import type { PeerGone } from "./node.ts";
-import type { Envelope, PeerRecord, PendingQuestion } from "./protocol.ts";
+import { shortId, withoutAskedTasks } from "./protocol.ts";
 
-export function peerGoneNotice(event: PeerGone): string {
-	const who = `${event.record.name} (${ownerRef(event.record)})`;
-	const what =
-		event.reason === "left"
-			? `${who} stopped its bus endpoint. Its process may still run.`
-			: event.reason === "recycled"
-				? `${who} vanished. Its pid was reused.`
-				: `${who} exited.`;
-	const owed = event.pending.map((entry) => `"${truncate(entry.subject || entry.body, 60)}"`);
-	return owed.length ? `${what} It had ${owed.length} unanswered request(s): ${owed.join(", ")}.` : what;
+/** Open work between this session and one other agent, in both directions. */
+export interface OpenWork {
+	/** Questions and tasks this session waits for from the agent. */
+	waiting: number;
+	/** Questions and tasks the agent waits for from this session. */
+	owed: number;
 }
 
-export function lapseNotice(entry: PendingQuestion, now = Date.now()): string {
-	const outstanding = entry.targets.filter((target) => !target.answered && !target.gone).map((target) => target.name);
-	return `No reply yet from ${outstanding.join(", ")} after ${ago(entry.askedAt, now)} on "${truncate(entry.subject || entry.body, 60)}". Do not resend. Wait, or probe once.`;
+export function openWorkWith(agent: string, pending: PendingResult, owed: PendingResult): OpenWork {
+	const count = (raw: PendingResult) => {
+		const result = withoutAskedTasks(raw);
+		return (
+			result.expectReply.filter((entry) => entry.agent === agent).length +
+			result.tasks.filter((task) => task.agent === agent).length
+		);
+	};
+	return { waiting: count(pending), owed: count(owed) };
 }
 
-export interface PeerGoneContext {
-	selfOwner: string;
-	selfInstanceId: string;
-	/** `labels.parent` of this instance. */
+export function offlineNotice(event: PresenceEvent, work: OpenWork): string {
+	const what = `${event.name} (id:${shortId(event.agent)}) went offline.`;
+	return work.waiting > 0 ? `${what} It had ${work.waiting} unanswered request(s).` : what;
+}
+
+export function lapseNotice(name: string, askedAt: number, title: string, now = Date.now()): string {
+	return `No reply yet from ${name} after ${ago(askedAt, now)} on "${title}". Do not resend. Wait, or probe once.`;
+}
+
+export interface OfflineContext {
+	/** The parent session id of this session. */
 	parent: string | undefined;
 	policy: WakePolicy;
-	unansweredInbound: Envelope[];
 }
 
-export function sentBy(envelope: Envelope, record: PeerRecord): boolean {
-	return envelope.from.owner ? envelope.from.owner === record.owner : envelope.from.instanceId === record.instanceId;
-}
-
-/** A peer exit wakes only when work is owed to or from that peer, or it is a child, and the wake policy allows it. */
-export function peerGoneWakes(event: PeerGone, context: PeerGoneContext): boolean {
-	const record = event.record;
-	const owedFrom = event.pending.length > 0;
-	const owedTo = context.unansweredInbound.some((envelope) => sentBy(envelope, record));
-	const parentLabel = record.labels["parent"];
-	const child = parentLabel === context.selfOwner || parentLabel === context.selfInstanceId;
-	if (!owedFrom && !owedTo && !child) return false;
+/** An offline notice wakes only when work is open with that agent, or it is a child, and the wake policy allows it. */
+export function offlineWakes(event: PresenceEvent, work: OpenWork, context: OfflineContext): boolean {
+	const child = event.relation === "child";
+	if (work.waiting === 0 && work.owed === 0 && !child) return false;
 	if (context.policy === "none") return false;
-	if (context.policy === "parent") {
-		return Boolean(context.parent) && (record.owner === context.parent || record.instanceId === context.parent);
-	}
+	if (context.policy === "parent") return Boolean(context.parent) && event.agent === context.parent;
 	return true;
 }
 
 const EXPECTED_EXIT_MS = 10 * 60_000;
 
-interface ExitMark {
-	at: number;
-	reasons: readonly PeerGone["reason"][] | undefined;
-}
-
-/** Owners whose next exit notice was asked for, so it must not start a run. */
+/** Agents whose next offline notice was asked for, so it must not start a run. */
 export class ExpectedExits {
-	private readonly marks = new Map<string, ExitMark>();
+	private readonly marks = new Map<string, { at: number }>();
 
-	/** No `reasons` matches any reason. Returns a cancel that drops only this mark. */
-	expect(owner: string, reasons?: readonly PeerGone["reason"][], now = Date.now()): () => void {
-		const mark: ExitMark = { at: now, reasons };
-		this.marks.set(owner, mark);
+	/** Returns a cancel that drops only this mark. */
+	expect(agent: string, now = Date.now()): () => void {
+		const mark = { at: now };
+		this.marks.set(agent, mark);
 		return () => {
-			if (this.marks.get(owner) === mark) this.marks.delete(owner);
+			if (this.marks.get(agent) === mark) this.marks.delete(agent);
 		};
 	}
 
-	/** Any exit uses up the mark. Only a marked reason inside the window matches. */
-	take(owner: string, reason: PeerGone["reason"], now = Date.now()): boolean {
-		const mark = this.marks.get(owner);
-		this.marks.delete(owner);
-		if (!mark || now - mark.at > EXPECTED_EXIT_MS) return false;
-		return !mark.reasons || mark.reasons.includes(reason);
+	/** Any offline event uses up the mark. Only a mark inside the window matches. */
+	take(agent: string, now = Date.now()): boolean {
+		const mark = this.marks.get(agent);
+		this.marks.delete(agent);
+		return Boolean(mark) && now - (mark?.at ?? 0) <= EXPECTED_EXIT_MS;
 	}
 
-	clear(owner: string): void {
-		this.marks.delete(owner);
+	clear(agent: string): void {
+		this.marks.delete(agent);
 	}
 }

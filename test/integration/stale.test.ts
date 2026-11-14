@@ -171,7 +171,7 @@ describe("stale", () => {
 		await h.session.prompt("again");
 		expect(gapsIn(h.requests[0])).toEqual([
 			expect.stringContaining(
-				"\nSince then: the host restarted. pi restarted.\nLost with the old pi process: background jobs, monitors, timers, bus endpoints.\n",
+				"\nSince then: the host restarted. pi restarted.\nLost with the old pi process: background jobs, monitors, timers.\n",
 			),
 		]);
 		expect(gapsIn(h.requests[1])).toEqual([]);
@@ -208,7 +208,7 @@ describe("stale", () => {
 		const [gap] = gapsIn(h.requests[0]);
 		expect(gap).toContain("Last activity: 3d 2h ago.");
 		expect(gap).toContain(
-			"\nSince then: pi restarted.\nLost with the old pi process: background jobs, monitors, timers, bus endpoints.\n",
+			"\nSince then: pi restarted.\nLost with the old pi process: background jobs, monitors, timers.\n",
 		);
 		expect(gapsIn(h.requests[1])).toEqual([]);
 	});

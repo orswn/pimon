@@ -182,12 +182,12 @@ describe("gapText", () => {
 				"<session-gap>",
 				"Last activity: 2h 14m ago. Now: 2026-11-09 16:19 +07.",
 				"Since then: the host was suspended for 1h 50m. pi restarted.",
-				"Lost with the old pi process: background jobs, monitors, timers, bus endpoints.",
+				"Lost with the old pi process: background jobs, monitors, timers.",
 				"Check facts from before the gap before you act on them.",
 				"</session-gap>",
 			].join("\n"),
 		);
-		expect(text.length).toBe(279);
+		expect(text.length).toBe(264);
 	});
 
 	it("lists the host restart", () => {

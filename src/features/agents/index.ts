@@ -1,10 +1,11 @@
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { createProcessRunner, type ExecFn } from "../../core/exec.ts";
 import { defineFeature } from "../../core/feature.ts";
+import { shortId } from "../bus/protocol.ts";
 import {
-	awaitPlacement,
 	loadSpawnFile,
 	newChildState,
+	removePidFile,
 	sendTask,
 	type SpawnSource,
 	spawnIdentity,
@@ -12,25 +13,26 @@ import {
 	startChildSession,
 } from "./child.ts";
 import { registerCommands, showAgentsList } from "./commands.ts";
-import { createHerdrPlacer, HERDR_START_TIMEOUT_MS, type Placer } from "./placement.ts";
+import { createHerdrPlacer, type Placer } from "./placement.ts";
 import { AGENTS_PROMPT, delegatedPrompt } from "./prompt.ts";
 import { ChildRecords } from "./records.ts";
-import { type AgentPaths, agentPaths, placedMarkerPath } from "./spawn-file.ts";
+import { type AgentPaths, agentPaths } from "./spawn-file.ts";
 import {
 	AGENTS_TOOL_DESCRIPTION,
 	type AgentsHost,
 	type AgentsToolInput,
 	agentsToolSchema,
+	childAgents,
+	childOnline,
 	cleanupGoneChild,
 	isActiveChild,
 	pruneFiles,
-	rewatchChildren,
 	runToolAction,
 } from "./tool.ts";
 
 declare module "../../core/events.ts" {
 	interface PimonEvents {
-		/** Children of this bus owner that are not confirmed gone. */
+		/** Children of this session that are starting or online. */
 		"agents:counts": { active: number };
 	}
 }
@@ -46,11 +48,7 @@ interface AgentsFeatureOptions {
 
 const DEFAULT_TIMING: AgentsHost["timing"] = {
 	spawnWaitMs: 15_000,
-	pollMs: 200,
 	killGraceMs: 2_000,
-	placedPollMs: 100,
-	// A parent that died after placement must not strand the task.
-	placedWaitMs: 2 * HERDR_START_TIMEOUT_MS,
 };
 
 export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
@@ -81,31 +79,57 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				},
 			};
 
-			// A record can outlive its child, so only children that are starting or on the bus count.
-			const leftEndpoints = new Set<string>();
-			let lastActive: number | undefined;
-			const publishActive = (always = false) => {
-				const children = bus.started ? host.records.mine(bus.owner) : [];
-				const known = new Set(children.map((record) => record.instanceId));
-				for (const id of leftEndpoints) if (!known.has(id)) leftEndpoints.delete(id);
-				const active = children.filter((record) => isActiveChild(host, record, leftEndpoints)).length;
-				if (!always && active === lastActive) return;
-				lastActive = active;
+			// A record can outlive its child, so only children that are starting or online count.
+			// `lastActive` survives a link drop for the exit warning; the statusline shows 0 while offline.
+			let lastActive = 0;
+			let shown: number | undefined;
+			let counting: Promise<void> | undefined;
+			const show = (active: number, always: boolean) => {
+				if (!always && active === shown) return;
+				shown = active;
 				ctx.events.emit("agents:counts", { active });
+			};
+			const publishActive = (always = false) => {
+				if (!bus.online) {
+					show(0, always);
+					return;
+				}
+				if (host.records.mine(bus.id).length === 0) {
+					lastActive = 0;
+					show(0, always);
+					return;
+				}
+				counting = (counting ?? Promise.resolve()).then(async () => {
+					try {
+						const agents = await childAgents(host);
+						const children = host.records.mine(bus.id);
+						lastActive = children.filter((record) => isActiveChild(record, agents.get(record.spawnId))).length;
+						show(lastActive, always);
+					} catch {
+						// The next presence or link event counts again.
+					}
+				});
 			};
 			host.records.onChange = () => publishActive();
 
-			const child = ctx.reloadState("child", 1, newChildState);
-			loadSpawnFile(child, bus.launch, ctx.log);
+			const child = ctx.reloadState("child", 3, newChildState);
 			let source: SpawnSource | undefined;
-			let pendingTask: string | undefined;
-			let cancelWait: (() => void) | undefined;
-			// TODO(okka): the task is lost when the child reloads before placement; keep pendingTask in reload state to fix.
-			ctx.onSessionShutdown(() => {
-				cancelWait?.();
-				cancelWait = undefined;
+			let ready = false;
+			const deliverFirstTask = () => {
+				const task = child.firstTask;
+				if (!ready || !task || task.sent || task.text === undefined) return;
+				task.sent = true;
+				sendTask(ctx.pi, task.text);
+			};
+			bus.setSpawnIdentity((extCtx) => {
+				loadSpawnFile(child, paths, extCtx.sessionManager.getSessionId(), ctx.log);
+				return spawnIdentity(child, spawnSource(child, extCtx));
 			});
-			bus.setSpawnIdentity((extCtx) => spawnIdentity(spawnSource(child, extCtx, bus.launch)));
+			bus.onFirstTask((message) => {
+				if (!child.firstTask || child.firstTask.sent) return;
+				child.firstTask.text = message.body;
+				deliverFirstTask();
+			});
 
 			ctx.promptSection({ name: "agents", requiresTools: ["pi_agents"], render: () => AGENTS_PROMPT });
 			ctx.promptSection({ name: "role", render: () => source?.entry.role.prompt });
@@ -115,7 +139,7 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 					if (!source) return undefined;
 					const { entry } = source;
 					const name = bus.started ? bus.name : entry.child.name || entry.role.name;
-					return delegatedPrompt(name, entry.parent.name, entry.parent.owner);
+					return delegatedPrompt(name, entry.parent.name, entry.parent.id);
 				},
 			});
 
@@ -139,34 +163,40 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				if (kind === "agents") void showAgentsList(host, show);
 			});
 
-			bus.onPeerGone((event) => {
-				leftEndpoints.add(event.record.instanceId);
+			bus.onPresence((event) => {
+				if (event.relation !== "child") return;
 				publishActive();
+				childOnline(host, event);
 				cleanupGoneChild(host, event).catch((error: unknown) => ctx.log.error("child cleanup failed", error));
 			});
-			bus.onReady(() => {
-				rewatchChildren(host);
-				publishActive();
-			});
+			bus.onReady(() => publishActive(true));
 
 			ctx.onSessionStart((event, extCtx) => {
-				source = spawnSource(child, extCtx, bus.launch);
-				pendingTask = startChildSession(ctx.pi, child, source, event);
-				rewatchChildren(host);
+				source = spawnSource(child, extCtx);
+				startChildSession(ctx.pi, child, source, event, paths, ctx.log);
 				publishActive(true);
 			});
-			// The task waits for the render and for the parent's placement. The render puts the role and delegated sections in the first request.
+			// The render puts the role and delegated sections in the first request, so the task waits for it.
 			ctx.events.on("pimon:session-ready", () => {
-				const task = pendingTask;
-				pendingTask = undefined;
-				if (task === undefined || !child.data || !bus.launch.spawnFile) return;
-				const marker = placedMarkerPath(dirname(bus.launch.spawnFile), child.data.spawnId);
-				const timing = { pollMs: host.timing.placedPollMs, waitMs: host.timing.placedWaitMs };
-				// TODO(okka): a bus wake=now message that arrives before placement can start a run first; hold such wakes until the task is sent.
-				cancelWait = awaitPlacement(marker, timing, () => {
-					cancelWait = undefined;
-					sendTask(ctx.pi, task);
-				});
+				ready = true;
+				deliverFirstTask();
+			});
+			ctx.onSessionShutdown((event, extCtx) => {
+				ready = false;
+				if (event.reason === "quit") removePidFile(child, paths);
+				const live = lastActive;
+				if (live === 0 || !["new", "resume", "fork"].includes(event.reason) || !bus.started) return;
+				if (!extCtx.hasUI) return;
+				try {
+					extCtx.ui.notify(
+						live === 1
+							? `1 child stays with session ${shortId(bus.id)}. Resume it to get its result.`
+							: `${live} children stay with session ${shortId(bus.id)}. Resume it to get their results.`,
+						"warning",
+					);
+				} catch {
+					// A replaced context cannot notify.
+				}
 			});
 		},
 	});

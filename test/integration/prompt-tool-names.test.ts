@@ -5,7 +5,7 @@ import { features } from "../../src/features/index.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
 
 // Backticked words in the sections that are neither tools nor schema enum values.
-const NOT_TOOLS = new Set(["await", "delivered", "unconfirmed", "failed"]);
+const NOT_TOOLS = new Set(["await", "delivered", "queued", "unconfirmed", "failed"]);
 // pi tools that the in-process harness does not load.
 const PI_TOOLS = new Set(["codemode"]);
 

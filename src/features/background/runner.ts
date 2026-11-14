@@ -162,7 +162,7 @@ function childEnv(): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	// A pi started inside a job must not inherit this session's bus identity.
 	for (const key of Object.keys(env)) {
-		if (key.startsWith("PI_BUS_") && key !== "PI_BUS_DIR") delete env[key];
+		if (key.startsWith("PI_BUS_")) delete env[key];
 	}
 	return env;
 }

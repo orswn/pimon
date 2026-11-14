@@ -1,46 +1,38 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { defineFeature } from "../../src/core/feature.ts";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { clearReloadState } from "../../src/core/reload-state.ts";
-import { bus, type BusService } from "../../src/features/bus/index.ts";
-import { createHarness, type Harness } from "../support/harness.ts";
+import { busCapture, busHarness, until } from "../support/bus.ts";
+import type { Harness } from "../support/harness.ts";
+import { type HubPeer, startPeer, startTestHub, type TestHub } from "../support/hub.ts";
 
-let service: BusService | undefined;
-const capture = defineFeature({
-	id: "bus-capture",
-	description: "test feature that captures the bus service",
-	defaultEnabled: true,
-	dependsOn: ["bus"],
-	setup(ctx) {
-		service = ctx.service("bus");
-	},
-});
-
-async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
-	const deadline = Date.now() + timeoutMs;
-	while (!check()) {
-		if (Date.now() > deadline) throw new Error("condition not met in time");
-		await new Promise((resolve) => setTimeout(resolve, 20));
-	}
-}
+const capture = busCapture();
 
 describe("bus status line", () => {
+	let hub: TestHub;
 	let harness: Harness | undefined;
+	let peer: HubPeer | undefined;
+	beforeAll(async () => {
+		hub = await startTestHub();
+	});
+	afterAll(async () => {
+		await hub.close();
+	});
 	beforeEach(() => {
 		clearReloadState();
 	});
 	afterEach(async () => {
-		service = undefined;
+		await peer?.stop();
+		peer = undefined;
+		capture.reset();
 		await harness?.shutdown();
 		harness?.dispose();
 		harness = undefined;
 		clearReloadState();
 	});
 
-	it("sends the status text only when it changed, and again after a session start", async () => {
+	it("shows link state and unread count without a peer count, sends only changes, and again after a session start", async () => {
 		const sent: string[] = [];
-		harness = await createHarness({
-			features: [bus, capture],
+		harness = await busHarness(hub.url, capture, {
 			ui: {
 				setStatus: (key: string, text: string | undefined) => {
 					if (key === "pi-bus") sent.push(text ?? "");
@@ -48,15 +40,21 @@ describe("bus status line", () => {
 			},
 		});
 		const h = harness;
-		await until(() => service?.started === true && sent.length > 0);
-		expect(sent).toEqual(["bus: 0 peers"]);
+		await until(() => sent.at(-1) === "bus: online");
+		const settled = sent.length;
 
 		h.respond([fauxAssistantMessage(fauxText("a")), fauxAssistantMessage(fauxText("b"))]);
 		await h.session.prompt("one");
 		await h.session.prompt("two");
-		expect(sent).toEqual(["bus: 0 peers"]);
+		expect(sent).toHaveLength(settled);
 
+		peer = await startPeer(hub.url, "writer");
+		await peer.send(capture.get().id, "note", { wake: "never" });
+		await until(() => sent.at(-1) === "bus: 1 unread");
+		expect(sent.every((text) => !/peer/.test(text))).toBe(true);
+
+		const before = sent.length;
 		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
-		expect(sent).toEqual(["bus: 0 peers", "bus: 0 peers"]);
+		expect(sent.slice(before)).toEqual(["bus: 1 unread"]);
 	});
 });

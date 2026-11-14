@@ -163,7 +163,7 @@ describe("background job", () => {
 		expect(readFileSync(options.logFile, "utf8")).toContain("\u001b[31m");
 	});
 
-	it("does not pass PI_BUS_* to the child except PI_BUS_DIR", async () => {
+	it("does not pass PI_BUS_* to the child", async () => {
 		process.env["PI_BUS_NAME"] = "mars-parent";
 		process.env["PI_BUS_OWNER"] = "owner-uuid";
 		process.env["PI_BUS_DIR"] = "/tmp/keepme";
@@ -173,7 +173,7 @@ describe("background job", () => {
 			const seen = state.tail.join("\n");
 			expect(seen).not.toContain("PI_BUS_NAME");
 			expect(seen).not.toContain("PI_BUS_OWNER");
-			expect(seen).toContain("PI_BUS_DIR=/tmp/keepme");
+			expect(seen).not.toContain("PI_BUS_DIR");
 		} finally {
 			delete process.env["PI_BUS_NAME"];
 			delete process.env["PI_BUS_OWNER"];

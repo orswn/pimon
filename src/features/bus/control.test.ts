@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
-	controlAllowed,
 	FORCE_EXIT_MS,
 	FORCE_POLL_MS,
 	type ForcedCloseDeps,
@@ -68,21 +67,5 @@ describe("forced close after a close request", () => {
 		cancel();
 		vi.advanceTimersByTime(FORCE_EXIT_MS * 2);
 		expect(calls).toEqual({ shutdown: 0, exit: 0 });
-	});
-});
-
-describe("control permission", () => {
-	const parent = "a".repeat(32);
-	const envelope = (token?: string) =>
-		({
-			kind: "control",
-			from: { owner: parent, instanceId: "b".repeat(32) },
-			data: token ? { token } : undefined,
-		}) as unknown as Parameters<typeof controlAllowed>[0];
-
-	it("accepts the parent without a token only when no token is required", () => {
-		expect(controlAllowed(envelope(), "parent", undefined, parent)).toBe(true);
-		expect(controlAllowed(envelope(), "parent", undefined, parent, true)).toBe(false);
-		expect(controlAllowed(envelope("t"), "parent", "t", parent, true)).toBe(true);
 	});
 });

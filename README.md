@@ -113,16 +113,21 @@ All features are on by default. The list is in load order.
 
 ### `bus`
 
-- Purpose: messages between pi instances on this host. Gives digests and presence.
+- Purpose: messages between pi sessions through a `pimon-hub` (see [Hub](#hub)), on one host or several. Gives digests, presence, and a one-line status per session.
+- The bus address of a session is its session id: `id:<12 hex>`. It stays the same across reloads and restarts.
+- Messages to an offline session wait in its hub mailbox. A send result says `delivered`, `queued`, `unconfirmed`, or `failed` per recipient.
 - Options:
-  - `historyRetentionDays`: integer, default `30`, minimum `0`. Deletes older message history files. `0` keeps all.
+  - `hub.url`: string, no default. The hub base URL, such as `https://hub.example`. Without it, the bus does no network work and `pi_bus` actions other than `whoami` return an error.
+  - `hub.tokenFile`: string, default `<agentDir>/pimon-hub.token`. The file holds the bearer token of a `host` principal. The file must be readable only by its owner, for example mode `0600`. The bus refuses any other file.
+  - `historyRetentionDays`: accepted and ignored. The hub owns retention.
+- Example: `{ "features": { "bus": { "hub": { "url": "https://hub.example" } } } }`.
 - Tools: `pi_bus`.
-- Commands: `/bus`, `/bus-peers`, `/bus-inbox`, `/bus-send`, `/bus-probe`, `/bus-pending`, `/bus-doctor`.
+- Commands: `/bus`, `/bus-peers`, `/bus-inbox`, `/bus-send`, `/bus-status`, `/bus-probe`, `/bus-pending`, `/bus-doctor`.
 
 ### `agents`
 
 - Purpose: starts visible child pi instances in Herdr panes, with roles and a lifecycle.
-- Needs: `bus`.
+- Needs: `bus`, with a hub. The parent gives the child its session id and sends the first task through the hub.
 - Options: none.
 - Tools: `pi_agents`.
 - Commands: `/agents`, `/agents-roles`, `/agents-where`, `/agents-close`, `/agents-kill`, `/agents-focus`, `/agents-prune`.
@@ -260,48 +265,44 @@ The external file maps an agent id to an A2A server outside the hub. `SIGHUP` re
 Names that pimon reads:
 
 - `PI_BACKGROUND_DIR`: state dir for background leases. Default: `<agentDir>/background`.
-- `PI_BUS_DIR`: bus dir. Default: `<agentDir>/bus`.
-- `PI_BUS_NAME`: bus name of this instance.
-- `PI_BUS_ROLE`: `role` label.
-- `PI_BUS_PARENT`: `parent` label.
+- `PI_BUS_NAME`: bus name of this session.
+- `PI_BUS_ROLE`: role of this session.
+- `PI_BUS_PARENT`: parent session id of a session started by hand. The hub stores it as given. That parent can then close this session.
 - `PI_BUS_TEAM`: `team` label.
 - `PI_BUS_LABELS`: more labels, as `key=value,key=value`.
-- `PI_BUS_OWNER`: owner id of this instance.
 - `PI_BUS_WAKE_POLICY`: `all`, `parent`, or `none`. Default `all`.
-- `PI_BUS_CONTROL`: who can send control requests: `parent`, `any`, or `none`. Default `parent`.
-- `PI_BUS_CONTROL_TOKEN`: token that control requests must carry.
+- `PI_BUS_CONTROL`: `parent` or `none`. Default `parent`. With `none`, this session refuses a close request from its parent. `any` acts as `parent`.
 - `PI_BUS_DEBUG`: `1` writes bus debug lines to stderr.
-- `PIMON_SPAWN_FILE`: spawn file of a child that `agents` started.
 - `PI_CODING_AGENT_DIR`: `agents` gives it to a child.
 - `HERDR_ENV`, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`: `agents` uses them to place children.
 - `SHELL`: `agents` uses it to find an idle pane.
 - `PI_ASK_SECRET_REASON`: `pi-ask-secret` shows it to the human. The caller sets it.
 - `XDG_RUNTIME_DIR`: base dir for the `ask-secret` socket and the usage cache. Default `/tmp`.
-- `TMPDIR`: base dir for the temporary files below.
+- `TMPDIR`: base dir for the temporary files below. `agents` gives its temp dir to a child.
 
 Names that pimon sets:
 
 - `PI_ASK_SECRET_SOCK`: socket of the `ask-secret` prompt.
 - `SUDO_ASKPASS`: the `pi-ask-secret` client.
 - `PI_SECRET_<NAME>`: a secret that the human gave.
-- `PIMON_SPAWN_FILE`, `PI_BUS_DIR`, `PI_CODING_AGENT_DIR`: `agents` sets them in a child pane.
+- `PI_CODING_AGENT_DIR`: `agents` sets it in a child pane when the parent has it.
+- `TMPDIR`: `agents` sets it in a child pane to the temp dir of the parent.
 
 At start, pimon removes these names from its own env. Commands and child processes do not inherit them:
 
-- `PI_BUS_OWNER`, `PI_BUS_NAME`, `PI_BUS_LABELS`, `PI_BUS_ROLE`, `PI_BUS_PARENT`, `PI_BUS_TEAM`, `PI_BUS_CONTROL_TOKEN`.
-- `PI_AGENT_LABEL`, `PI_AGENTS_TOOLS`, `PIMON_SPAWN_FILE`.
+- `PI_BUS_NAME`, `PI_BUS_LABELS`, `PI_BUS_ROLE`, `PI_BUS_PARENT`, `PI_BUS_TEAM`.
+- Names that earlier versions used: `PI_BUS_OWNER`, `PI_BUS_CONTROL_TOKEN`, `PI_BUS_DIR`, `PI_AGENT_LABEL`, `PI_AGENTS_TOOLS`, `PIMON_SPAWN_FILE`.
 
-Background jobs also do not inherit the other `PI_BUS_*` names, except `PI_BUS_DIR`.
+Background jobs also do not inherit the other `PI_BUS_*` names.
 
 ## Files
 
-pimon writes these paths:
+pimon reads or writes these paths:
 
-- `<agentDir>/bus/`: presence, sockets, and message history.
-- `$TMPDIR/pi-bus-<uid>/`: bus sockets when the socket path is too long.
+- `<agentDir>/pimon-hub.token`: read only. The hub token of the `bus` feature. Set another path with `hub.tokenFile`.
 - `<agentDir>/background/leases/`: crash-recovery leases. With `PI_BACKGROUND_DIR`: `$PI_BACKGROUND_DIR/leases/`.
 - `$TMPDIR/pi-background-logs/`: job logs without a `logFile`.
-- `$TMPDIR/pi-agents-<uid>/`: child records, spawn files, prompts, and session roles.
+- `$TMPDIR/pi-agents-<uid>/`: child records, spawn files, child pid files, close hooks, and session roles.
 - `$XDG_RUNTIME_DIR/pi-ask-secret/<pid>.sock`: `ask-secret` socket.
 - `$XDG_RUNTIME_DIR/pimon-<uid>/statusline/`: provider usage cache.
 - `ask-secret` rewrites pi tool output files that contain a secret.
@@ -317,10 +318,8 @@ From 1.0.0, SemVer covers these surfaces:
 - Commands.
 - Environment names that pimon reads or sets, except `PI_BUS_DEBUG`. Names that other programs own are not covered.
 - Role file frontmatter.
-- The bus wire protocol, `BUS_PROTOCOL = 1`.
+- The versioned records: lease, spawn file, child pid file, agent record, and usage cache. Log files are not covered.
 
-The hub HTTP API and `HUB_PROTOCOL` are not covered before 2.0.0.
-
-- The versioned records: presence, lease, spawn file, agent record, usage cache, and history lines. Log files are not covered.
+The hub HTTP API is versioned by `HUB_PROTOCOL`, not by the pimon version. A pimon client works with a hub of the same `HUB_PROTOCOL`.
 
 Prompt text and tool descriptions can change in a minor version.

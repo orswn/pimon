@@ -146,12 +146,11 @@ describe("session roles", () => {
 
 describe("session role keys", () => {
 	it("keys by session, not by process", () => {
-		expect(sessionKey("sess-a", "owner1")).not.toBe(sessionKey("sess-b", "owner1"));
-		expect(sessionKey("sess-a", "owner1")).toBe(sessionKey("sess-a", "owner2"));
-		expect(sessionKey(undefined, "owner1")).toBe("owner1");
-		expect(sessionKey("../../etc", "owner1")).not.toContain("/");
-		expect(sessionKey("", "")).toBe("unknown");
-		expect(sessionKey("x".repeat(200), "o")).toHaveLength(64);
+		expect(sessionKey("sess-a")).not.toBe(sessionKey("sess-b"));
+		expect(sessionKey("../../etc")).not.toContain("/");
+		expect(sessionKey("")).toBe("unknown");
+		expect(sessionKey(undefined)).toBe("unknown");
+		expect(sessionKey("x".repeat(200))).toHaveLength(64);
 	});
 });
 

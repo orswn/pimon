@@ -9,9 +9,10 @@ import {
 	pendingAction,
 	probeAction,
 	sendAction,
+	setStatusAction,
 } from "./tool.ts";
 
-export function registerCommands(pi: ExtensionAPI, host: ActionHost): void {
+export function registerCommands(pi: ExtensionAPI, host: ActionHost, tokenCheck: () => string): void {
 	const command = (name: string, description: string, run: (args: string) => ActionResult | Promise<ActionResult>) => {
 		pi.registerCommand(name, {
 			description,
@@ -27,7 +28,7 @@ export function registerCommands(pi: ExtensionAPI, host: ActionHost): void {
 	};
 
 	command("bus", "Show pi-bus status and identity", () => busStatusAction(host));
-	command("bus-peers", "List pi instances on the bus", () => peersAction(host));
+	command("bus-peers", "List sessions on the bus", () => peersAction(host));
 	command("bus-inbox", "Show recent bus messages: /bus-inbox [unread]", (args) =>
 		inboxAction(host, { limit: 15, unreadOnly: args === "unread" }),
 	);
@@ -37,7 +38,12 @@ export function registerCommands(pi: ExtensionAPI, host: ActionHost): void {
 		if (!target || !body) throw new Error("usage: /bus-send <selector> <text>");
 		return sendAction(host, { action: "send", target, body, kind: "note", wake: "now" });
 	});
+	command("bus-status", "Set the one-line status that peers see: /bus-status [text]; no text clears it", (args) =>
+		setStatusAction(host, args),
+	);
 	command("bus-probe", "Probe peers: /bus-probe [selector]", (args) => probeAction(host, args || undefined));
 	command("bus-pending", "Show questions still awaiting a reply", () => pendingAction(host));
-	command("bus-doctor", "Diagnose the bus: identity, peers, stale entries", () => doctorAction(host));
+	command("bus-doctor", "Diagnose the bus: hub health, token, link, and duplicate names", () =>
+		doctorAction(host, tokenCheck),
+	);
 }

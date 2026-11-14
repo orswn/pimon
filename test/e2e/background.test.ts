@@ -29,7 +29,6 @@ function runPi(prompt: string, label: string): Promise<Run> {
 			env: {
 				...env,
 				PI_CODING_AGENT_SESSION_DIR: join(root, "sessions", label),
-				PI_BUS_DIR: join(root, `bus-${label}`),
 				PI_BACKGROUND_DIR: join(root, `state-${label}`),
 			},
 			stdio: ["ignore", "pipe", "pipe"],

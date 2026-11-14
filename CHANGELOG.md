@@ -4,6 +4,30 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Changed
+
+- Breaking: the `bus` feature talks to a `pimon-hub` instead of local sockets. Set `features.bus.hub.url` in `pimon.json` and put a `host` token in `<agentDir>/pimon-hub.token`, readable only by its owner. Without a url, the bus does no network work. Sessions on pimon 1.x and on this version cannot message each other.
+- Breaking: the bus address of a session is its session id, `id:<12 hex>`. It stays the same across reloads and restarts. `owner:` is an alias of `id:`. The selector `stale` matches nothing.
+- A message to an offline session waits in its hub mailbox. Send and reply results say `delivered`, `queued`, `unconfirmed`, or `failed` per recipient. A broken connection after the request went out is `unconfirmed`, not `failed`.
+- `historyRetentionDays` is accepted and ignored. The hub owns retention.
+- A reply of kind `result` or `answer` to an open task completes that task. A reply of kind `question` sets it to input-required. The result says `queued`: the hub stored the update. This also works for a task from a hub principal, such as Hermes.
+- `pi_bus peers` lists external A2A agents with `kind=external`. `name:` and `id:` select them.
+- `agents` starts a child with `--session-id`, makes its hub row before the start, and sends the first task through the hub. The child takes its spawn data from a private file named after its session id. The child pane gets the temp dir of the parent as `TMPDIR`. A child keeps its bus address across `/reload`. A child shows its task subject as its status until it sets one.
+- `agents` kills a child by the pid in its private pid file. `close` goes through the hub and works only from the parent.
+- `/new`, `/resume`, and `/fork` in a parent leave its children with the old session. Resume it to get their results.
+- The `agents` prompt and the delegated prompt no longer say that `/reload` replaces the bus endpoint.
+- The stale gap message no longer lists bus endpoints as lost after a restart.
+
+### Added
+
+- `pi_bus action="set_status"` and `/bus-status`: a one-line status per session. `pi_bus peers`, `/bus-peers`, `pi_agents list`, and `/agents` show it. The session keeps it across restarts.
+
+### Removed
+
+- Control requests `interrupt` and `abort` and the `bus:interrupt` event.
+- `PI_BUS_DIR`, `PI_BUS_OWNER`, `PI_BUS_CONTROL_TOKEN`, and `PIMON_SPAWN_FILE`. pimon still removes them from its env.
+- Local bus files: `<agentDir>/bus/` and `$TMPDIR/pi-bus-<uid>/`.
+
 ## [1.8.0] - 2026-11-14
 
 ### Added

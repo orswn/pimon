@@ -127,8 +127,7 @@ export function gapText(gap: Gap): string {
 		`Last activity: ${formatDuration(gap.gapMs)} ago. Now: ${formatNow(gap.now, gap.offsetMinutes)}.`,
 	];
 	if (facts.length > 0) lines.push(`Since then: ${facts.join(". ")}.`);
-	if (gap.pi === "restart")
-		lines.push("Lost with the old pi process: background jobs, monitors, timers, bus endpoints.");
+	if (gap.pi === "restart") lines.push("Lost with the old pi process: background jobs, monitors, timers.");
 	// A reload alone keeps jobs, timers, and the session, so nothing needs a check.
 	const reloadOnly = gap.pi === "reload" && !gap.host && !gap.idle;
 	if (!reloadOnly) lines.push("Check facts from before the gap before you act on them.");

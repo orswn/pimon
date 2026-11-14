@@ -39,7 +39,6 @@ const CLAIM_TOOL = "goal_done";
 const GOAL_SET_TOOL = "goal_set";
 const NO_TIMER_WARNING = "The active goal has no armed timer. Run /goal resume to continue it.";
 const WAITING_NOTICE = "Goal still active. It continues after your next message. /goal pause stops it.";
-const PEER_WAITING_NOTICE = "Goal waiting: a peer interrupted the run. It continues after your next message.";
 
 const CLAIM_DESCRIPTION =
 	"Mark the active goal done. Call it only when the objective holds now. Must be the only tool call in its message.";
@@ -125,8 +124,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				waiting: undefined,
 				record: undefined,
 			}));
-			// Set when a bus peer interrupts the current run, so its wait also reaches the phone.
-			let peerInterrupted = false;
 			let ui: ExtensionContext | undefined;
 
 			const notice = (message: string, level: "info" | "warning" | "error") => {
@@ -263,12 +260,7 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 						announceStop(effect.reason, effect.detail, effect.phone);
 						return;
 					case "waiting":
-						if (!peerInterrupted) {
-							notice(WAITING_NOTICE, "info");
-							return;
-						}
-						notice(PEER_WAITING_NOTICE, "info");
-						report({ kind: "info", message: PEER_WAITING_NOTICE });
+						notice(WAITING_NOTICE, "info");
 						return;
 					case "condition":
 						// TODO(okka): the reminder lands one turn late after an in-run threshold compaction.
@@ -285,7 +277,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				session.cancel = undefined;
 				session.authority = closeAuthority();
 				see(extensionCtx);
-				peerInterrupted = false;
 				const branch = extensionCtx.sessionManager.getBranch();
 				const saved = latestFromEntries(branch, ENTRY_TYPE);
 				const kept = kind === "reload" && slot.sessionId === session.sessionId ? slot.record : undefined;
@@ -321,10 +312,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 			pi.on("session_tree", (_event, extensionCtx) => {
 				if (live) reconstruct(extensionCtx, "navigation");
 			});
-			ctx.events.on("bus:interrupt", () => {
-				if (live && isActive(session.life.record) && !isIdle()) peerInterrupted = true;
-			});
-
 			ctx.onSessionShutdown(() => {
 				slot.sessionId = session.sessionId;
 				slot.waiting = session.life.waiting;
@@ -389,7 +376,6 @@ export function createGoalFeature(options: GoalFeatureOptions = {}) {
 				session.authority = closeAuthority();
 				see(extensionCtx);
 				run({ type: "settled", aborted: event.aborted, timerArmed: timerArmed() }, extensionCtx);
-				peerInterrupted = false;
 			});
 
 			pi.on("session_compact", (_event, extensionCtx) => {

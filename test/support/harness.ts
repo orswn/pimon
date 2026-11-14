@@ -65,6 +65,8 @@ export interface HarnessOptions {
 	responses?: FauxResponseStep[];
 	/** Defaults to an empty in-memory session. */
 	sessionManager?: (cwd: string) => SessionManager;
+	/** Gets the session before the extensions bind, so a test can act while session_start runs. */
+	onSession?: (session: AgentSession) => void;
 }
 
 const DEFAULT_SETTINGS: Partial<Settings> = { compaction: { enabled: false }, retry: { enabled: false } };
@@ -162,6 +164,7 @@ export async function createHarness(options: HarnessOptions): Promise<Harness> {
 			projectTrusted: options.projectTrusted ?? true,
 		}),
 	});
+	options.onSession?.(session);
 	const requests: Message[][] = [];
 	const respond = (steps: FauxResponseStep[]) => {
 		faux.setResponses(

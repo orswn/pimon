@@ -5,24 +5,13 @@ import {
 	fauxText,
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import { defineFeature } from "../../src/core/feature.ts";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { clearReloadState } from "../../src/core/reload-state.ts";
-import { bus, type BusService } from "../../src/features/bus/index.ts";
-import { BusNode } from "../../src/features/bus/node.ts";
-import { busDirs } from "../../src/features/bus/registry.ts";
-import { createHarness, type Harness } from "../support/harness.ts";
+import { busCapture, busHarness } from "../support/bus.ts";
+import type { Harness } from "../support/harness.ts";
+import { type HubPeer, startPeer, startTestHub, type TestHub } from "../support/hub.ts";
 
-let service: BusService | undefined;
-const capture = defineFeature({
-	id: "bus-capture",
-	description: "test feature that captures the bus service",
-	defaultEnabled: true,
-	dependsOn: ["bus"],
-	setup(ctx) {
-		service = ctx.service("bus");
-	},
-});
+const capture = busCapture();
 
 interface Latch {
 	promise: Promise<void>;
@@ -52,8 +41,15 @@ const has = (messages: unknown, needle: string) => JSON.stringify(messages ?? []
 
 describe("bus digests and compaction", () => {
 	let harness: Harness | undefined;
-	let peer: BusNode | undefined;
+	let peer: HubPeer | undefined;
+	let hub: TestHub;
 
+	beforeAll(async () => {
+		hub = await startTestHub();
+	});
+	afterAll(async () => {
+		await hub.close();
+	});
 	beforeEach(() => clearReloadState());
 	afterEach(async () => {
 		await peer?.stop();
@@ -61,29 +57,18 @@ describe("bus digests and compaction", () => {
 		await harness?.shutdown();
 		harness?.dispose();
 		harness = undefined;
-		service = undefined;
+		capture.reset();
 		clearReloadState();
 	});
 
 	async function setup(steps: FauxResponseStep[]): Promise<{ h: Harness; self: string }> {
-		const h = await createHarness({ features: [bus, capture] });
+		const h = await busHarness(hub.url, capture);
 		harness = h;
-		const deadline = Date.now() + 5_000;
-		while (!service?.started) {
-			if (Date.now() > deadline) throw new Error("bus did not start");
-			await sleep(20);
-		}
-		peer = new BusNode({
-			owner: crypto.randomUUID(),
-			desiredName: "peer",
-			dirs: busDirs(h.agentDir),
-			onEnvelope: () => {},
-		});
-		await peer.start();
+		peer = await startPeer(hub.url, "peer");
 		h.respond([say("R1"), say("R2"), ...steps]);
 		await h.session.prompt(big("OLD-P1"));
 		await h.session.prompt(big("OLD-P2"));
-		return { h, self: `id:${service.instanceId}` };
+		return { h, self: capture.get().id };
 	}
 
 	it("starts no request for a digest during a manual compaction", async () => {
@@ -98,7 +83,7 @@ describe("bus digests and compaction", () => {
 
 		const compacting = h.session.compact();
 		await started.promise;
-		await peer?.send(self, { body: "DURING-COMPACTION", kind: "note", wake: "now" });
+		await peer?.send(self, "DURING-COMPACTION");
 		await sleep(1_600);
 		expect(h.requests).toHaveLength(3);
 		release.open();
@@ -119,7 +104,7 @@ describe("bus digests and compaction", () => {
 			fauxAssistantMessage(fauxToolCall("pi_bus", { action: "inbox" }), { stopReason: "toolUse" }),
 			say("done"),
 		]);
-		await peer?.send(self, { body: "ABORTED-DIGEST", kind: "note", wake: "now" });
+		await peer?.send(self, "ABORTED-DIGEST");
 		await started.promise;
 		const compacting = h.session.compact();
 		release.open();

@@ -1,4 +1,4 @@
-import { pbkdf2, randomUUID } from "node:crypto";
+import { pbkdf2 } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,18 +14,17 @@ import type { PimonEventBus } from "../../src/core/events.ts";
 import { type AnyFeature, defineFeature } from "../../src/core/feature.ts";
 import { createAgentsFeature } from "../../src/features/agents/index.ts";
 import type { Placer } from "../../src/features/agents/placement.ts";
-import { type AgentPaths, agentPaths, takeSpawnFile } from "../../src/features/agents/spawn-file.ts";
+import { type AgentPaths, agentPaths, spawnFilePath, takeSpawnFile } from "../../src/features/agents/spawn-file.ts";
 import { background } from "../../src/features/background/index.ts";
 import { createRegistry, type JobState, type Registry } from "../../src/features/background/registry.ts";
 import { shutdownJobs } from "../../src/features/background/runner.ts";
 import { bus } from "../../src/features/bus/index.ts";
-import { BusNode } from "../../src/features/bus/node.ts";
-import { busDirs } from "../../src/features/bus/registry.ts";
 import { clearAllTimers, createTimerStore, type TimerStore } from "../../src/features/background/timers.ts";
 import { createGoalFeature } from "../../src/features/goal/index.ts";
 import { createNotifyFeature } from "../../src/features/notify/index.ts";
 import { reloadSlot } from "../../src/core/reload-state.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
+import { type HubPeer, startPeer, startTestHub, type TestHub, writeHubConfig } from "../support/hub.ts";
 
 type FooterFactory = Parameters<ExtensionUIContext["setFooter"]>[0];
 type FooterData = Parameters<NonNullable<FooterFactory>>[2];
@@ -791,35 +790,37 @@ describe("statusline work counts", () => {
 });
 
 describe("statusline agents count", () => {
-	const nodes: BusNode[] = [];
+	const children: HubPeer[] = [];
 	let paths: AgentPaths;
+	let hub: TestHub;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		paths = agentPaths(join(mkdtempSync(join(tmpdir(), "statusline-agents-")), "pi-agents"));
+		hub = await startTestHub();
 	});
 
 	afterEach(async () => {
-		for (const node of nodes.splice(0)) await node.stop();
+		for (const child of children.splice(0)) await child.stop();
 		await harness?.shutdown();
+		await hub.close();
 	});
 
-	/** Places nothing. Plays a child that reads its spawn file and joins the bus. */
-	function childPlacer(agentDir: () => string): Placer {
+	/** Places nothing. Plays a child that reads its spawn file, links, and takes its first task. */
+	function childPlacer(): Placer {
 		let next = 0;
 		return {
 			inside: () => true,
-			async place(request) {
-				const taken = takeSpawnFile(request.env["PIMON_SPAWN_FILE"] ?? "");
-				if (!("data" in taken)) throw new Error(taken.error);
-				const node = new BusNode({
-					owner: randomUUID(),
-					desiredName: taken.data.child.name ?? "child",
-					labels: taken.data.child.labels,
-					dirs: busDirs(agentDir()),
-					onEnvelope: () => {},
+			async place(_request, id) {
+				const taken = takeSpawnFile(spawnFilePath(paths, id));
+				if (!taken || !("data" in taken)) throw new Error(taken?.error ?? "no spawn file");
+				const child = await startPeer(hub.url, taken.data.child.name ?? "child", {
+					id,
+					parent: taken.data.parent.id,
 				});
-				nodes.push(node);
-				await node.start();
+				children.push(child);
+				void child.next("message").then(async (event) => {
+					if (event.payload.taskId) await child.client.taskUpdate(event.payload.taskId, { state: "working" });
+				});
 				next++;
 				return { kind: "herdr", handle: `w1:p${next}`, tabId: `w1:t${next}`, layout: "tab", detail: "test" };
 			},
@@ -830,17 +831,12 @@ describe("statusline agents count", () => {
 		};
 	}
 
-	it("counts a spawned child until its bus endpoint leaves", async () => {
-		let agentDir = "";
-		const agents = createAgentsFeature({
-			paths,
-			placer: childPlacer(() => agentDir),
-			timing: { spawnWaitMs: 3_000, pollMs: 20, placedPollMs: 20, placedWaitMs: 5_000 },
-		});
+	it("counts a spawned child until it goes offline", async () => {
+		const agents = createAgentsFeature({ paths, placer: childPlacer(), timing: { spawnWaitMs: 3_000 } });
 		const s = await start({
 			before: [background, bus, agents],
 			prepareAgentDir: (dir) => {
-				agentDir = dir;
+				writeHubConfig(dir, hub.url);
 				mkdirSync(join(dir, "agents"));
 				writeFileSync(join(dir, "agents", "worker.md"), "---\nname: worker\n---\nYou work.\n");
 			},
@@ -855,11 +851,12 @@ describe("statusline agents count", () => {
 			fauxAssistantMessage(fauxText("closing")),
 		]);
 		await s.h.session.prompt("spawn one");
-		expect(s.line()).toMatch(/ A:1 B:0 M:0 T:0 │ /);
+		await until(() => / A:1 B:0 M:0 T:0 │ /.test(s.line()));
 
 		await s.h.session.prompt("close it");
-		const child = nodes.at(-1) as BusNode;
-		await child.stop({ announce: true });
+		const child = children.at(-1) as HubPeer;
+		await child.next("control");
+		await child.stop();
 		await until(() => / A:0 B:0 M:0 T:0 │ /.test(s.line()));
 	});
 });

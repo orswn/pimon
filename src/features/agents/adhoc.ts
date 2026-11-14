@@ -9,7 +9,7 @@ import { THINKING_LEVELS } from "./runtime.ts";
 
 /** Names become file names and bus labels. */
 const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,31}$/;
-const DAY_MS = 24 * 60 * 60_000;
+export const DAY_MS = 24 * 60 * 60_000;
 
 interface SessionRolePatch {
 	name: string;
@@ -30,9 +30,9 @@ interface ExistingRole {
 	labels?: Record<string, string> | undefined;
 }
 
-/** The bus owner is reused across session replacement in one process, so the session id is the key. */
-export function sessionKey(sessionId: string | undefined, owner: string): string {
-	const raw = sessionId?.trim() || owner;
+/** One key per session, so a new session in the same process gets its own files. */
+export function sessionKey(sessionId: string | undefined): string {
+	const raw = sessionId?.trim() || "";
 	const safe = raw.replace(/[^a-zA-Z0-9._-]/g, "");
 	return safe.slice(0, 64) || "unknown";
 }

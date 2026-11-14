@@ -60,7 +60,6 @@ function recordingExec(code = 0) {
 const probeEvents: GoalStatePayload[] = [];
 let probeWake: (customType: string, content: string) => void = () => {};
 let probeUserMessage: (text: string) => void = () => {};
-let probeInterrupt: () => void = () => {};
 let slowStep = newSlowStep();
 function newSlowStep() {
 	let release: () => void = () => {};
@@ -81,7 +80,6 @@ const probe = defineFeature({
 		ctx.events.on("goal:state", (payload) => probeEvents.push(payload as GoalStatePayload));
 		probeWake = (customType, content) => ctx.wake({ customType, content, display: true });
 		probeUserMessage = (text) => ctx.pi.sendUserMessage(text);
-		probeInterrupt = () => ctx.events.emit("bus:interrupt", { from: "boss" });
 		ctx.pi.registerTool({
 			name: "nested_claim",
 			label: "Nested claim",
@@ -403,9 +401,7 @@ describe("goal never interrupts the running step", () => {
 });
 
 describe("goal after an interrupted run", () => {
-	const PEER_TEXT = "Goal waiting: a peer interrupted the run. It continues after your next message.";
-
-	async function interrupted(h: Harness, beforeAbort = () => {}, prompt = "/goal ship it") {
+	async function interrupted(h: Harness) {
 		let streaming: () => void = () => {};
 		const begun = new Promise<void>((resolve) => {
 			streaming = resolve;
@@ -416,9 +412,8 @@ describe("goal after an interrupted run", () => {
 				options?.signal?.addEventListener("abort", () => resolve(fauxAssistantMessage([], { stopReason: "error" })));
 			});
 		h.respond([cut]);
-		await h.session.prompt(prompt);
+		await h.session.prompt("/goal ship it");
 		await begun;
-		beforeAbort();
 		await h.session.abort();
 		await settle(h);
 		expect(probeEvents.at(-1)).toMatchObject({ state: "active", waiting: true });
@@ -437,21 +432,6 @@ describe("goal after an interrupted run", () => {
 		expect(JSON.stringify(h.requests[2])).toContain("Goal continuation");
 		expect(probeEvents.at(-1)).toMatchObject({ state: "active" });
 		expect(probeEvents.at(-1)).not.toHaveProperty("waiting");
-	});
-
-	it("an interrupt from a bus peer also sends a phone info, and Esc does not", async () => {
-		const h = await start(0, {});
-		await interrupted(h, probeInterrupt);
-		expect(h.uiNotices).toContain(PEER_TEXT);
-		const desktop = notifyCalls.calls.filter((entry) => entry.command === "notify-send").map((entry) => entry.args);
-		expect(desktop).toHaveLength(1);
-		expect(desktop[0]?.at(-1)).toBe(PEER_TEXT);
-		expect(h.uiNotices).not.toContain("Goal still active. It continues after your next message. /goal pause stops it.");
-
-		await h.session.prompt("/goal pause");
-		await interrupted(h, () => {}, "/goal resume");
-		expect(h.uiNotices).toContain("Goal still active. It continues after your next message. /goal pause stops it.");
-		expect(notifyCalls.calls.filter((entry) => entry.command === "notify-send")).toHaveLength(1);
 	});
 
 	it("/goal resume during a run that does not end the wait continues the goal after that run", async () => {

@@ -1,164 +1,50 @@
-// No pi imports: the node, registry, selectors, and protocol modules run under plain `node` in process tests.
+// No pi imports: these helpers run under plain `node` in process tests.
+import type { BusKind, LinkTaskState, PendingResult, Priority, Wake } from "../../hub/protocol.ts";
 
-export const BUS_PROTOCOL = 1;
+export type { AgentInfo, BusKind, Priority, Wake } from "../../hub/protocol.ts";
 
-export type PeerState = "starting" | "idle" | "busy" | "closing";
-
-export type EnvelopeKind =
-	| "note"
-	| "question"
-	| "answer"
-	| "task"
-	| "result"
-	| "correction"
-	| "status"
-	| "event"
-	| "control";
-
-export type Priority = "normal" | "important" | "urgent";
-
-export type Wake = "now" | "never";
-
-export function normalizeWake(wake?: Wake): Wake {
-	return wake === "never" ? "never" : "now";
-}
-
-export interface PeerRef {
-	instanceId: string;
-	/** Stable across reloads and session replacement. `instanceId` rotates per endpoint. */
-	owner: string;
-	name: string;
-	pid: number;
-	cwd: string;
-	sock: string;
-	labels: Record<string, string>;
-}
-
-export interface PeerRecord extends PeerRef {
-	protocol: number;
-	host: string;
-	topics: string[];
-	state: PeerState;
-	activity?: string | undefined;
-	startedAt: number;
-	heartbeatAt: number;
-	/** Process start time from the OS, used to detect pid recycling. */
-	pidBirth?: string | undefined;
-	sessionFile?: string | undefined;
-	session?: string | undefined;
-	model?: string | undefined;
-	/** Reader-only: the pid is alive but the heartbeat is late. Never written. */
-	stale?: boolean;
-}
-
-export interface Envelope {
-	v: number;
+/** One bus message as the digest, inbox, and read views show it. */
+export interface BusMessage {
 	id: string;
 	threadId: string;
-	corrId?: string | undefined;
-	replyExpected?: boolean | undefined;
-	from: PeerRef;
-	to: string;
-	kind: EnvelopeKind;
-	priority: Priority;
+	taskId?: string | undefined;
+	/** `id` is absent for a sender that is a hub principal, not an agent. */
+	from: { id?: string | undefined; name: string };
+	to?: { id: string; name: string } | undefined;
+	direction: "in" | "out";
+	kind: BusKind;
 	wake: Wake;
+	priority?: Priority | undefined;
 	subject?: string | undefined;
 	body: string;
 	data?: unknown;
+	expectReply?: boolean | undefined;
+	replyTo?: string | undefined;
+	taskState?: LinkTaskState | undefined;
 	createdAt: number;
-	expiresAt?: number | undefined;
 }
 
-export type WireRequest =
-	| { v: number; type: "envelope"; envelope: Envelope }
-	| { v: number; type: "ping"; from?: string };
-
-export type WireResponse =
-	| { type: "ack"; id: string; instanceId: string; name: string; accepted: boolean; reason?: string | undefined }
-	| {
-			type: "pong";
-			instanceId: string;
-			name: string;
-			state: PeerState;
-			activity?: string | undefined;
-			pid: number;
-			startedAt: number;
-			labels: Record<string, string>;
-	  }
-	| { type: "error"; reason: string };
-
-export interface DeliveryFailure {
-	instanceId: string;
-	name: string;
-	reason: string;
-}
-
-export interface AckNote {
-	instanceId: string;
-	name: string;
-	accepted: boolean;
-	reason?: string | undefined;
-}
-
-export interface SendResult {
-	envelope: Envelope;
-	matched: PeerRecord[];
-	/** Acked by the receiver. */
-	delivered: PeerRecord[];
-	/** Written to the socket but never acked. The receiver may still process it. */
-	unknown: DeliveryFailure[];
-	/** Never handed over. */
-	failed: DeliveryFailure[];
-	acks: AckNote[];
-}
-
-export interface ProbeResult {
-	name: string;
-	instanceId: string;
-	alive: boolean;
-	state?: PeerState | undefined;
-	activity?: string | undefined;
-	labels?: Record<string, string> | undefined;
-	rttMs?: number | undefined;
-	uptimeMs?: number | undefined;
-	reason?: string | undefined;
-}
-
-export interface PendingTarget {
-	instanceId: string;
-	owner?: string | undefined;
-	name: string;
-	answered: boolean;
-	gone: boolean;
-}
-
-export interface PendingQuestion {
-	envelopeId: string;
-	threadId: string;
-	to: string;
-	/** Per target: one answer must not clear the others. */
-	targets: PendingTarget[];
-	subject?: string | undefined;
-	body: string;
-	askedAt: number;
-	dueAt: number;
-	nudged: boolean;
-}
-
-export const HEARTBEAT_MS = 5_000;
-/** Heartbeat age past which a live pid is reported as blocked. Never a reason to reap. */
-export const PEER_STALE_MS = 30_000;
-export const DIAL_TIMEOUT_MS = 3_000;
-export const DIAL_DEADLINE_MS = 5_000;
-export const PEER_CACHE_MS = 750;
-export const WATCH_MS = 2_000;
-export const MAX_BODY_BYTES = 256 * 1024;
-export const MAX_LINE_BYTES = 1_000_000;
+export const AGENTS_CACHE_MS = 750;
+/** Concurrent sends of one fan-out. Not a cap on recipients. */
 export const MAX_FANOUT = 32;
 export const PENDING_NUDGE_MS = 10 * 60_000;
 
+export const TERMINAL_TASK_STATES: ReadonlySet<string> = new Set(["completed", "failed", "canceled", "rejected"]);
+
+const UUID_LIKE = /^[0-9a-f]{8}(-?[0-9a-f]{4}){3}-?[0-9a-f]{12}$/i;
+
+/** 12 hex of a uuid. Other ids, such as an external agent id or a foreign message id, stay whole. */
 export function shortId(value: string): string {
-	return value.replace(/-/g, "").toLowerCase().slice(0, 12);
+	return UUID_LIKE.test(value) ? value.replace(/-/g, "").toLowerCase().slice(0, 12) : value;
+}
+
+/** The hub matches a prefix against the stored id, which has the uuid dashes. */
+export function dashedPrefix(value: string): string {
+	if (!/^[0-9a-f]{1,32}$/i.test(value)) return value;
+	const hex = value.toLowerCase();
+	return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)]
+		.filter(Boolean)
+		.join("-");
 }
 
 /** Normalized hex form of an id fragment, or undefined when it is not usable. */
@@ -174,22 +60,13 @@ export function fullId(value: string): string {
 	return value.replace(/-/g, "").toLowerCase();
 }
 
-export function isCanonicalId(value: string): boolean {
-	return /^[0-9a-f]{32}$/.test(fullId(value || ""));
+/** A question opens a task too. Its expectReply entry stands for both, so views and counts show it once. */
+export function withoutAskedTasks(result: PendingResult): PendingResult {
+	const asked = new Set(result.expectReply.map((entry) => entry.taskId).filter((id) => id !== null));
+	return { expectReply: result.expectReply, tasks: result.tasks.filter((task) => !asked.has(task.taskId)) };
 }
 
-/** True when `value` is the id itself or a prefix of it, with or without dashes. */
-export function idMatches(id: string, value: string): boolean {
-	const want = fullId(value.trim());
-	if (!want) return false;
-	return fullId(id).startsWith(want);
-}
-
-/** Control tokens never go to disk or to the model. */
-export function withoutToken(envelope: Envelope): Envelope {
-	if (envelope.kind !== "control") return envelope;
-	const data = envelope.data;
-	if (!data || typeof data !== "object" || Array.isArray(data) || !("token" in data)) return envelope;
-	const { token: _token, ...rest } = data as Record<string, unknown>;
-	return { ...envelope, data: rest };
+/** `<name> id:<12 hex>`, or only the name for a hub principal without an agent id. */
+export function senderText(agent: { id?: string | undefined; name: string }): string {
+	return agent.id ? `${agent.name} id:${shortId(agent.id)}` : agent.name;
 }

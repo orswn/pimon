@@ -18,20 +18,21 @@ import { join } from "node:path";
 
 export const SPAWN_ENTRY = "pimon-spawn";
 
-/** Everything a child needs at start. The file is the only carrier of the task and the control token. */
+/** What a child needs at start. Keyed by the child's session id. The task itself waits in the hub mailbox. */
 export interface SpawnFile {
-	version: 1;
+	version: 2;
+	/** The child's session id. */
 	spawnId: string;
 	role: { name: string; prompt: string };
-	parent: { name: string; owner: string };
+	/** `id` is the parent's session id. */
+	parent: { name: string; id: string };
 	child: { name?: string | undefined; labels: Record<string, string>; tools?: string[] | undefined };
-	controlToken: string;
-	task: string;
+	firstTask: { messageId: string };
 	createdAt: number;
 }
 
-/** The session entry keeps what a resume needs. The task and the token never reach the session file. */
-export type SpawnEntry = Omit<SpawnFile, "controlToken" | "task">;
+/** The session entry keeps what a resume needs. */
+export type SpawnEntry = Omit<SpawnFile, "firstTask">;
 
 export interface AgentPaths {
 	root: string;
@@ -41,7 +42,7 @@ export interface AgentPaths {
 	roles: string;
 }
 
-/** Task text and tokens live here, so the root is private to this user. */
+/** Spawn data and child pids live here, so the root is private to this user. */
 export function agentPaths(root = join(tmpdir(), `pi-agents-${userInfo().uid}`)): AgentPaths {
 	return {
 		root,
@@ -84,9 +85,8 @@ export function spawnFilePath(paths: AgentPaths, spawnId: string): string {
 	return join(paths.spawn, `${spawnId}.json`);
 }
 
-/** Exists once the parent's placement returned, so the child's first run cannot fail the placement. */
-export function placedMarkerPath(spawnDir: string, spawnId: string): string {
-	return join(spawnDir, `${spawnId}.placed`);
+export function pidFilePath(paths: AgentPaths, spawnId: string): string {
+	return join(paths.spawn, `${spawnId}.pid`);
 }
 
 export function writeSpawnFile(paths: AgentPaths, data: SpawnFile): string {
@@ -110,16 +110,18 @@ function isString(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0;
 }
 
-function parseSpawnFile(raw: unknown): SpawnFile | string {
+/** Version 1 entries name the parent by its process owner id. */
+function parseEntryFields(raw: unknown): SpawnEntry | string {
 	if (typeof raw !== "object" || raw === null) return "not a JSON object";
 	const data = raw as Partial<Record<keyof SpawnFile, unknown>>;
-	if (data.version !== 1) return `unsupported version ${JSON.stringify(data.version)}`;
+	if (data.version !== 1 && data.version !== 2) return `unsupported version ${JSON.stringify(data.version)}`;
 	const role = data.role as { name?: unknown; prompt?: unknown } | undefined;
-	const parent = data.parent as { name?: unknown; owner?: unknown } | undefined;
+	const parent = data.parent as { name?: unknown; id?: unknown; owner?: unknown } | undefined;
 	const child = data.child as { name?: unknown; labels?: unknown; tools?: unknown } | undefined;
 	if (!isString(data.spawnId)) return "spawnId is missing";
 	if (!role || !isString(role.name) || typeof role.prompt !== "string") return "role is missing";
-	if (!parent || !isString(parent.name) || !isString(parent.owner)) return "parent is missing";
+	const parentId = parent?.id ?? parent?.owner;
+	if (!parent || !isString(parent.name) || !isString(parentId)) return "parent is missing";
 	if (!child || !isRecordOfStrings(child.labels)) return "child labels are missing";
 	if (child.name !== undefined && typeof child.name !== "string") return "child name is not a string";
 	if (
@@ -127,22 +129,27 @@ function parseSpawnFile(raw: unknown): SpawnFile | string {
 		!(Array.isArray(child.tools) && child.tools.every((tool) => typeof tool === "string"))
 	)
 		return "child tools are not a list of strings";
-	if (!isString(data.controlToken)) return "controlToken is missing";
-	if (typeof data.task !== "string") return "task is missing";
 	return {
-		version: 1,
+		version: 2,
 		spawnId: data.spawnId,
 		role: { name: role.name, prompt: role.prompt },
-		parent: { name: parent.name, owner: parent.owner },
+		parent: { name: parent.name, id: parentId },
 		child: {
 			name: child.name || undefined,
 			labels: { ...child.labels },
 			tools: child.tools as string[] | undefined,
 		},
-		controlToken: data.controlToken,
-		task: data.task,
 		createdAt: typeof data.createdAt === "number" ? data.createdAt : 0,
 	};
+}
+
+function parseSpawnFile(raw: unknown): SpawnFile | string {
+	const entry = parseEntryFields(raw);
+	if (typeof entry === "string") return entry;
+	if ((raw as { version?: unknown }).version !== 2) return "unsupported version 1";
+	const firstTask = (raw as { firstTask?: { messageId?: unknown } }).firstTask;
+	if (!firstTask || !isString(firstTask.messageId)) return "firstTask is missing";
+	return { ...entry, version: 2, firstTask: { messageId: firstTask.messageId } };
 }
 
 function removeQuietly(path: string): void {
@@ -153,8 +160,8 @@ function removeQuietly(path: string): void {
 	}
 }
 
-/** Reads and deletes the file. The file is deleted even when it is bad, so a token never stays on disk. */
-export function takeSpawnFile(path: string): { data: SpawnFile } | { error: string } {
+/** Reads and deletes the file. Undefined when there is no file. A bad file is deleted too. */
+export function takeSpawnFile(path: string): { data: SpawnFile } | { error: string } | undefined {
 	let text: string;
 	let fd: number | undefined;
 	try {
@@ -166,6 +173,7 @@ export function takeSpawnFile(path: string): { data: SpawnFile } | { error: stri
 			return { error: `spawn file ${path} is not private: it must be owned by this user, with mode 0600` };
 		}
 	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		return { error: `cannot read spawn file ${path}: ${(error as Error).message}` };
 	} finally {
 		if (fd !== undefined) closeSync(fd);
@@ -182,12 +190,33 @@ export function takeSpawnFile(path: string): { data: SpawnFile } | { error: stri
 }
 
 export function spawnEntry(data: SpawnFile): SpawnEntry {
-	const { controlToken: _token, task: _task, ...entry } = data;
+	const { firstTask: _task, ...entry } = data;
 	return entry;
 }
 
 export function parseSpawnEntry(raw: unknown): SpawnEntry | undefined {
-	if (typeof raw !== "object" || raw === null) return undefined;
-	const data = parseSpawnFile({ ...(raw as object), controlToken: "-", task: "" });
-	return typeof data === "string" ? undefined : spawnEntry(data);
+	const entry = parseEntryFields(raw);
+	return typeof entry === "string" ? undefined : entry;
+}
+
+export interface PidData {
+	pid: number;
+	birth?: string | undefined;
+}
+
+/** The parent reads it to signal the child. Only the same host can use it. */
+export function writePidFile(paths: AgentPaths, spawnId: string, data: PidData): void {
+	ensurePrivateDir(paths.root);
+	ensurePrivateDir(paths.spawn);
+	writePrivateFile(pidFilePath(paths, spawnId), `${JSON.stringify(data)}\n`);
+}
+
+export function readPidFile(paths: AgentPaths, spawnId: string): PidData | undefined {
+	try {
+		const raw = JSON.parse(readFileSync(pidFilePath(paths, spawnId), "utf8")) as Partial<PidData>;
+		if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid)) return undefined;
+		return { pid: raw.pid, birth: typeof raw.birth === "string" ? raw.birth : undefined };
+	} catch {
+		return undefined;
+	}
 }

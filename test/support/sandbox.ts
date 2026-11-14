@@ -13,7 +13,7 @@ export const STUBBED_COMMANDS = [
 	"paplay",
 ] as const;
 
-export const ISOLATED_ENV_PREFIXES = ["PI_BUS_", "HERDR_", "PI_SECRET_"] as const;
+export const ISOLATED_ENV_PREFIXES = ["PI_BUS_", "HERDR_", "PI_SECRET_", "HUB_"] as const;
 
 export const ISOLATED_ENV_KEYS = [
 	"PI_ASK_SECRET_SOCK",

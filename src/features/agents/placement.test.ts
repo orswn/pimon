@@ -78,7 +78,7 @@ const request = (title: string): PlacementRequest => ({
 	title,
 	cwd: "/tmp",
 	args: ["--model", "a/b"],
-	env: { PIMON_SPAWN_FILE: "/x/spawn.json" },
+	env: { PI_CODING_AGENT_DIR: "/x/agent" },
 	closeHook: "/x/hook-herdr-close.ts",
 });
 
@@ -116,7 +116,7 @@ describe("herdr placement", () => {
 			"reviewer",
 			"--no-focus",
 			"--env",
-			"PIMON_SPAWN_FILE=/x/spawn.json",
+			"PI_CODING_AGENT_DIR=/x/agent",
 		]);
 		const starts = herdr.calls.filter((args) => args[0] === "agent" && args[1] === "start");
 		expect(starts.map((args) => args[2])).toEqual(["reviewer-12345678", "reviewer-abcdef12"]);

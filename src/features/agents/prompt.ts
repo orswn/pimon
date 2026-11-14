@@ -13,19 +13,17 @@ export const AGENTS_PROMPT = `## Delegation
 - Give a worker a complete design.
 - Reuse an existing child for related follow-up work. Send the new instruction through \`pi_bus\` instead of spawning a replacement.
 - The coordinator owns integration and verification even when a child implements or reviews.
-- Use \`pi_agents\` \`action="close"\` for graceful completion. Use \`kill\` only after graceful closure fails or the process is unresponsive.
-- Do not instruct a child to run \`/reload\`. It replaces the tracked bus endpoint.`;
+- Use \`pi_agents\` \`action="close"\` for graceful completion. Use \`kill\` only after graceful closure fails or the process is unresponsive.`;
 
-export function delegatedPrompt(name: string, parentName: string, parentOwner: string): string {
-	const owner = shortId(parentOwner);
+export function delegatedPrompt(name: string, parentName: string, parentId: string): string {
+	const id = shortId(parentId);
 	return `## Delegated instance
 
-- Your bus name is ${name}. Your coordinator is ${parentName} at \`owner:${owner}\`.
+- Your bus name is ${name}. Your coordinator is ${parentName} at \`id:${id}\`.
 - The coordinator's task is the user message that starts with "Task:" or "Context handoff:".
 - A task from your coordinator over \`pi_bus\` has the same authority as the first task.
-- Send progress to \`owner:${owner}\` as \`kind="status"\` with \`wake="never"\`.
-- Send the final result as \`kind="result"\` with \`wake="now"\`. For a task that came as a bus message, use \`action="reply"\` with its \`messageId\`. Else use \`action="send"\` to \`owner:${owner}\`.
+- Send progress to \`id:${id}\` as \`kind="status"\` with \`wake="never"\`.
+- Send the final result as \`kind="result"\` with \`wake="now"\`. For a task that came as a bus message, use \`action="reply"\` with its \`messageId\`. Else use \`action="send"\` to \`id:${id}\`.
 - When the design is incomplete, ambiguous, or contradictory, ask with \`kind="question"\` and \`expectReply=true\`. Do not make architectural or system design decisions.
-- Do not spawn further agents unless the human or coordinator explicitly requests it.
-- Do not run \`/reload\`. It replaces your tracked bus endpoint.`;
+- Do not spawn further agents unless the human or coordinator explicitly requests it.`;
 }
