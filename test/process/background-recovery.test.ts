@@ -1,5 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -268,7 +277,9 @@ describe("lease write failure", () => {
 		expect(error).toContain("lease");
 		expect(error).toContain("killed");
 		expect(reg.active.has("unleasable")).toBe(false);
-		await sleep(300);
+		expect(
+			await waitFor(() => existsSync(logFile) && readFileSync(logFile, "utf8").includes("lease could not be written")),
+		).toBe(true);
 		expect(readFileSync(logFile, "utf8")).toContain("lease could not be written");
 	});
 });

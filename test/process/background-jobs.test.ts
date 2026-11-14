@@ -102,7 +102,13 @@ describe("background job", () => {
 	it("stays silent while running and emits exactly one digest on exit", async () => {
 		const options = opts({ command: "echo first; sleep 1; echo second" });
 		const state = start(options);
-		await sleep(400);
+		expect(
+			await waitFor(
+				() =>
+					state.totalLines >= 1 &&
+					readTail(options.logFile, 10, LIMITS.logTailBytes).lines.some((line) => line.includes("first")),
+			),
+		).toBe(true);
 		expect(state.totalLines).toBeGreaterThanOrEqual(1);
 		expect(emitsFor(options.name)).toHaveLength(0);
 		expect(state.exitedAt).toBeUndefined();
@@ -249,7 +255,7 @@ describe("monitor matching", () => {
 		expect(first).toContain("matched 2 line(s)");
 		expect(first).not.toContain("ok\n");
 		await exited(state);
-		await sleep(150);
+		expect(await waitFor(() => emitsFor(options.name).some((text) => text.includes("ended")))).toBe(true);
 		expect(emitsFor(options.name).some((text) => text.includes("ended"))).toBe(true);
 	});
 
@@ -444,7 +450,8 @@ describe("stop", () => {
 		expect(Number.isInteger(grandchild) && grandchild > 0).toBe(true);
 		expect(pidAlive(grandchild)).toBe(true);
 		await stopJob(reg, state, "stopped by test");
-		await sleep(300);
+		// The killed grandchild stays a zombie until its parent or a subreaper reaps it.
+		expect(await waitFor(() => !pidAlive(grandchild))).toBe(true);
 		expect(pidAlive(grandchild)).toBe(false);
 		expect(readFileSync(options.logFile, "utf8")).toContain("# pi: stopping");
 		expect(emitsFor(options.name)).toHaveLength(0);

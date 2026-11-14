@@ -364,7 +364,9 @@ describe("script jobs", () => {
 		await h.waitForRequests(3);
 
 		await h.session.reload();
-		await new Promise((resolve) => setTimeout(resolve, 100));
+		await until(
+			() => findJob(registry(), "r1")?.exitStatus === "aborted" && findJob(registry(), "r2")?.exitStatus === "aborted",
+		);
 		expect(findJob(registry(), "r1")?.exitStatus).toBe("aborted");
 		expect(findJob(registry(), "r2")?.exitStatus).toBe("aborted");
 		expect(h.uiNotices.filter((text) => text.startsWith("Script jobs stopped at reload:"))).toEqual([

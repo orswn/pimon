@@ -20,6 +20,14 @@ afterEach(() => {
 	clearReloadState();
 });
 
+async function until(check: () => boolean, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!check()) {
+		if (Date.now() > deadline) throw new Error("condition not met in time");
+		await sleep(20);
+	}
+}
+
 /** A `git` first in PATH that records its arguments. Its child writes the marker before the 800 ms timeout unless shutdown kills the group. */
 function slowGit() {
 	const root = mkdtempSync(join(tmpdir(), "statusline-git-"));
@@ -53,7 +61,7 @@ describe("statusline git process", () => {
 				setWorkingIndicator: () => {},
 			},
 		});
-		await sleep(200);
+		await until(() => existsSync(git.log) && readFileSync(git.log, "utf8").includes("--no-optional-locks -C"));
 		expect(readFileSync(git.log, "utf8")).toContain("--no-optional-locks -C");
 		await harness.shutdown();
 		await sleep(1_500);

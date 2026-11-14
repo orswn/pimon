@@ -11,6 +11,14 @@ const marker = join(tmpdir(), `pimon-exec-orphan-${process.pid}`);
 const grandchild = `( sleep 2; echo alive > ${marker} ) & echo SHELL=$$; sleep 30`;
 const shellPid = (stdout: string) => Number(/SHELL=(\d+)/.exec(stdout)?.[1]);
 
+async function until(check: () => boolean, timeoutMs = 10_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!check()) {
+		if (Date.now() > deadline) throw new Error("condition not met in time");
+		await sleep(20);
+	}
+}
+
 describe("runProcess result normalization", () => {
 	it("reports a clean exit with code 0 and no failure", async () => {
 		const result = await runProcess("bash", ["-c", "echo hi"]);
@@ -102,7 +110,7 @@ describe("runProcess cancellation reaches the process tree", () => {
 		const pending = owner.run("bash", ["-c", grandchild], { signal: controller.signal, killGraceMs: 200 });
 		await sleep(400);
 		other.terminateAll();
-		await sleep(2_600);
+		await until(() => existsSync(marker));
 		expect(existsSync(marker)).toBe(true);
 		controller.abort();
 		expect((await pending).failed).toBe("aborted");
