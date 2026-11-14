@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-11-14
+
 ### Changed
 
 - Breaking: the `bus` feature talks to a `pimon-hub` instead of local sockets. Set `features.bus.hub.url` in `pimon.json` and put a `host` token in `<agentDir>/pimon-hub.token`, readable only by its owner. Without a url, the bus does no network work. Sessions on pimon 1.x and on this version cannot message each other.
