@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
-import type { Principal } from "./auth.ts";
+import { ANONYMOUS, type Principal } from "./auth.ts";
 import {
 	type AgentInfo,
 	type AgentKind,
@@ -306,6 +306,90 @@ interface PushConfigRow {
 	created_at: string;
 }
 
+export interface ExternalJob {
+	id: number;
+	agentId: string;
+	taskId: string;
+	contextId: string;
+	messageId: string | null;
+	op: "send" | "cancel";
+	attempts: number;
+	firstAt: number;
+	nextAt: number;
+}
+
+export interface RemoteTask {
+	taskId: string;
+	seq: number;
+	agentId: string;
+	contextId: string;
+	messageId: string | null;
+	remoteTaskId: string | null;
+	remoteContextId: string | null;
+	state: "dispatched" | "running" | "done";
+	dispatchedAt: number;
+}
+
+/** A hub message in the form an external agent gets it. */
+export interface OutboundMessage {
+	text: string;
+	contextId: string;
+	senderName: string;
+	senderHost: string | null;
+}
+
+interface ExternalJobRow {
+	id: number;
+	agent_id: string;
+	task_id: string;
+	context_id: string;
+	message_id: string | null;
+	op: "send" | "cancel";
+	attempts: number;
+	first_at: number;
+	next_at: number;
+}
+
+interface RemoteTaskRow {
+	task_id: string;
+	seq: number;
+	agent_id: string;
+	context_id: string;
+	message_id: string | null;
+	remote_task_id: string | null;
+	remote_context_id: string | null;
+	state: RemoteTask["state"];
+	dispatched_at: number;
+}
+
+function externalJob(row: ExternalJobRow): ExternalJob {
+	return {
+		id: row.id,
+		agentId: row.agent_id,
+		taskId: row.task_id,
+		contextId: row.context_id,
+		messageId: row.message_id,
+		op: row.op,
+		attempts: row.attempts,
+		firstAt: row.first_at,
+		nextAt: row.next_at,
+	};
+}
+
+function remoteTask(row: RemoteTaskRow): RemoteTask {
+	return {
+		taskId: row.task_id,
+		seq: row.seq,
+		agentId: row.agent_id,
+		contextId: row.context_id,
+		messageId: row.message_id,
+		remoteTaskId: row.remote_task_id,
+		remoteContextId: row.remote_context_id,
+		state: row.state,
+		dispatchedAt: row.dispatched_at,
+	};
+}
+
 export interface OutboxItem {
 	id: number;
 	taskId: string;
@@ -481,6 +565,7 @@ export class Engine {
 	readonly #linkListeners = new Set<Listener<[string, LinkEvent]>>();
 	readonly #ackListeners = new Set<Listener<[string, number]>>();
 	readonly #pushListeners = new Set<Listener<[]>>();
+	readonly #externalListeners = new Set<Listener<[]>>();
 	readonly #pushGuard: PushGuard;
 	readonly #log: (line: string) => void;
 	#pending: (() => void)[] | null = null;
@@ -596,6 +681,12 @@ export class Engine {
 		return () => this.#pushListeners.delete(listener);
 	}
 
+	/** Runs after a commit that queued work for an external agent. */
+	onExternal(listener: Listener<[]>): () => void {
+		this.#externalListeners.add(listener);
+		return () => this.#externalListeners.delete(listener);
+	}
+
 	// ---------- agents ----------
 
 	agent(id: string): AgentRow | undefined {
@@ -662,6 +753,30 @@ export class Engine {
 			at,
 			at,
 		);
+	}
+
+	/** A new row starts offline: the gateway sets it online when the agent answers. */
+	ensureExternal(id: string, name: string): void {
+		if (!AGENT_ID.test(id)) throw new HubError("invalid", `external agent id ${id} has invalid characters`);
+		this.tx(() => {
+			const existing = this.agent(id);
+			if (existing && existing.kind !== "external") {
+				throw new HubError("conflict", `agent id ${id} is in use by a ${existing.kind} agent`);
+			}
+			if (existing) {
+				this.#run("UPDATE agents SET name = ? WHERE id = ?", name, id);
+				return;
+			}
+			const at = this.iso();
+			this.#run(
+				`INSERT INTO agents (id, kind, host, name, online, registered_at, offline_at)
+				 VALUES (?, 'external', NULL, ?, 0, ?, ?)`,
+				id,
+				name,
+				at,
+				at,
+			);
+		});
 	}
 
 	register(principal: Principal, body: RegisterBody): RegisterResult {
@@ -803,7 +918,7 @@ export class Engine {
 	setOnline(id: string, online: boolean): void {
 		this.tx(() => {
 			const row = this.agent(id);
-			if (!row || row.kind !== "pi") return;
+			if (!row || row.kind === "builtin") return;
 			const at = this.iso();
 			if (online) {
 				this.#run("UPDATE agents SET online = 1, last_seen_at = ?, offline_at = NULL WHERE id = ?", at, id);
@@ -1037,6 +1152,10 @@ export class Engine {
 		return applyHistoryLength(this.#toWire(this.#visibleTask(agentId, caller, id)), historyLength);
 	}
 
+	taskState(id: string): WireState | undefined {
+		return this.#get<{ state: WireState }>("SELECT state FROM tasks WHERE id = ?", id)?.state;
+	}
+
 	/** A read without a scope check. */
 	readTask(id: string): WireTask | undefined {
 		const row = this.#taskRow(id);
@@ -1203,13 +1322,23 @@ export class Engine {
 			let created = false;
 			let contextId: string;
 			let stored: WireMessage;
-			if (incoming.taskId) {
-				task = this.#visibleTask(agent.id, caller, incoming.taskId);
+			const followUp = incoming.taskId
+				? this.#visibleTask(agent.id, caller, incoming.taskId)
+				: this.#openTaskInContext(agent, caller, incoming.contextId);
+			if (followUp) {
+				task = followUp;
 				if (isTerminal(task.state)) {
 					throw new HubError("task-terminal", `Task ${task.id} is in a terminal state and cannot accept messages`);
 				}
 				if (incoming.contextId && incoming.contextId !== task.context_id) {
 					throw new HubError("invalid", `contextId ${incoming.contextId} does not match task ${task.id}`);
+				}
+				// The external agent starts a new remote task per message, and a busy context would hold it unsent.
+				if (agent.kind === "external" && !INTERRUPTED_STATES.has(task.state)) {
+					throw new HubError(
+						"invalid",
+						`Task ${task.id} of external agent ${agent.name} takes a follow-up only when it waits for input`,
+					);
 				}
 				contextId = task.context_id;
 				stored = { ...incoming, taskId: task.id, contextId };
@@ -1242,6 +1371,9 @@ export class Engine {
 				task = this.#taskRow(id);
 				created = true;
 			} else {
+				if (agent.kind === "external") {
+					throw new HubError("invalid", "external agents take only task, question, or correction messages");
+				}
 				contextId = incoming.contextId || this.newId();
 				stored = { ...incoming, contextId };
 			}
@@ -1253,6 +1385,7 @@ export class Engine {
 				this.#emitTask(task, { task: snapshot }, task.state);
 			}
 			this.#insertInbox(agent.id, sender, caller, contextId, task?.id ?? null, meta, stored);
+			if (task && agent.kind === "external") this.#queueExternal(task, "send", stored.messageId);
 			const payload: LinkEventMap["message"] = {
 				messageId: stored.messageId,
 				contextId,
@@ -1313,6 +1446,26 @@ export class Engine {
 		});
 	}
 
+	/**
+	 * A peer or an external agent cannot carry a hub task id, so a follow-up names only the context.
+	 * It continues the one interrupted task between the same sender and target in that context.
+	 */
+	#openTaskInContext(agent: AgentRow, caller: Caller, contextId: string | undefined): TaskRow | undefined {
+		if (!contextId || caller.principal === ANONYMOUS || agent.kind === "builtin") return undefined;
+		if (caller.principal.kind !== "peer" && agent.kind !== "external") return undefined;
+		const rows = this.#all<TaskRow>(
+			`SELECT * FROM tasks WHERE agent_id = ? AND context_id = ? AND sender_principal = ?
+			 AND ((? IS NULL AND sender_agent IS NULL) OR sender_agent = ?)
+			 AND state IN ('TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED') LIMIT 2`,
+			agent.id,
+			contextId,
+			caller.principal.name,
+			caller.agent ?? null,
+			caller.agent ?? null,
+		);
+		return rows.length === 1 ? rows[0] : undefined;
+	}
+
 	/** Applies one change from the agent side. */
 	applyChange(taskId: string, change: TaskChange): WireTask {
 		return this.tx(() => {
@@ -1360,10 +1513,14 @@ export class Engine {
 				const text = messageText(message);
 				if (message && text) {
 					const meta = updateMeta(state);
+					const principal: Principal =
+						agent.kind === "external"
+							? { name: agent.name, kind: "peer" }
+							: { name: agent.host ?? agent.id, kind: "host" };
 					this.#insertInbox(
 						task.sender_agent,
 						{ agent: agent.id, name: agent.name, kind: agent.kind },
-						{ principal: { name: agent.host ?? agent.id, kind: "host" }, agent: agent.id },
+						{ principal, agent: agent.id },
 						task.context_id,
 						task.id,
 						meta,
@@ -1452,6 +1609,10 @@ export class Engine {
 			if (isTerminal(task.state)) throw new HubError("not-cancelable", `Task not cancelable: ${id}`);
 			this.#writeStatus(task, "TASK_STATE_CANCELED", undefined);
 			this.#emit(task.agent_id, "cancel", { taskId: task.id });
+			if (this.agent(task.agent_id)?.kind === "external") {
+				this.#run("DELETE FROM external_outbox WHERE task_id = ? AND op = 'send'", task.id);
+				this.#queueExternal(task, "cancel", null);
+			}
 			if (task.sender_agent) {
 				const agent = this.requireAgent(task.agent_id);
 				this.#emit(task.sender_agent, "update", {
@@ -1625,6 +1786,160 @@ export class Engine {
 
 	pushRetry(id: number, attempts: number, nextAt: number): void {
 		this.#run("UPDATE push_outbox SET attempts = ?, next_at = ? WHERE id = ?", attempts, nextAt, id);
+	}
+
+	// ---------- external agents ----------
+
+	#queueExternal(task: TaskRow, op: ExternalJob["op"], messageId: string | null): void {
+		const at = this.now();
+		this.#run(
+			`INSERT INTO external_outbox (agent_id, task_id, context_id, message_id, op, attempts, first_at, next_at)
+			 VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+			task.agent_id,
+			task.id,
+			task.context_id,
+			messageId,
+			op,
+			at,
+			at,
+		);
+		this.#afterCommit(() => this.#notify(this.#externalListeners));
+	}
+
+	/** Every queued job, oldest first. The gateway keeps one dispatch per context, so it needs the order. */
+	externalJobs(): ExternalJob[] {
+		return this.#all<ExternalJobRow>("SELECT * FROM external_outbox ORDER BY id").map(externalJob);
+	}
+
+	dropExternalJob(id: number): void {
+		this.#run("DELETE FROM external_outbox WHERE id = ?", id);
+	}
+
+	/** Marks the job as sent before the request goes out, so a restart never sends it twice. */
+	startRemote(job: ExternalJob): RemoteTask {
+		return this.tx(() => {
+			this.#run("DELETE FROM external_outbox WHERE id = ?", job.id);
+			const seq =
+				(this.#get<{ n: number | null }>("SELECT max(seq) AS n FROM remote_tasks WHERE task_id = ?", job.taskId)?.n ??
+					0) + 1;
+			const at = this.now();
+			this.#run(
+				`INSERT INTO remote_tasks (task_id, seq, agent_id, context_id, message_id, state, dispatched_at)
+				 VALUES (?, ?, ?, ?, ?, 'dispatched', ?)`,
+				job.taskId,
+				seq,
+				job.agentId,
+				job.contextId,
+				job.messageId,
+				at,
+			);
+			return {
+				taskId: job.taskId,
+				seq,
+				agentId: job.agentId,
+				contextId: job.contextId,
+				messageId: job.messageId,
+				remoteTaskId: null,
+				remoteContextId: null,
+				state: "dispatched",
+				dispatchedAt: at,
+			};
+		});
+	}
+
+	/** The agent did not take the request: the job goes back with its old id, so it keeps its place. */
+	requeueRemote(remote: RemoteTask, job: ExternalJob): void {
+		this.tx(() => {
+			this.#run("DELETE FROM remote_tasks WHERE task_id = ? AND seq = ?", remote.taskId, remote.seq);
+			this.#run(
+				`INSERT INTO external_outbox (id, agent_id, task_id, context_id, message_id, op, attempts, first_at, next_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				job.id,
+				job.agentId,
+				job.taskId,
+				job.contextId,
+				job.messageId,
+				job.op,
+				job.attempts,
+				job.firstAt,
+				job.nextAt,
+			);
+		});
+	}
+
+	remoteStarted(remote: RemoteTask, remoteTaskId: string, remoteContextId: string | null): void {
+		this.#run(
+			"UPDATE remote_tasks SET remote_task_id = ?, remote_context_id = ?, state = 'running' WHERE task_id = ? AND seq = ?",
+			remoteTaskId,
+			remoteContextId,
+			remote.taskId,
+			remote.seq,
+		);
+	}
+
+	remotePolled(remote: RemoteTask): void {
+		this.#run(
+			"UPDATE remote_tasks SET last_poll_at = ? WHERE task_id = ? AND seq = ?",
+			this.now(),
+			remote.taskId,
+			remote.seq,
+		);
+	}
+
+	remoteDone(remote: RemoteTask): void {
+		this.#run("UPDATE remote_tasks SET state = 'done' WHERE task_id = ? AND seq = ?", remote.taskId, remote.seq);
+	}
+
+	/** Remote tasks that were sent and have no final answer yet. */
+	activeRemotes(): RemoteTask[] {
+		return this.#all<RemoteTaskRow>(
+			"SELECT * FROM remote_tasks WHERE state != 'done' ORDER BY dispatched_at, task_id, seq",
+		).map(remoteTask);
+	}
+
+	latestRemote(taskId: string): RemoteTask | undefined {
+		const row = this.#get<RemoteTaskRow>(
+			"SELECT * FROM remote_tasks WHERE task_id = ? ORDER BY seq DESC LIMIT 1",
+			taskId,
+		);
+		return row ? remoteTask(row) : undefined;
+	}
+
+	remoteBusy(agentId: string, contextId: string): boolean {
+		return (
+			this.#get<{ n: number }>(
+				"SELECT count(*) AS n FROM remote_tasks WHERE agent_id = ? AND context_id = ? AND state != 'done'",
+				agentId,
+				contextId,
+			)?.n !== 0
+		);
+	}
+
+	remoteKnown(agentId: string, remoteTaskId: string): boolean {
+		return (
+			this.#get<{ n: number }>(
+				"SELECT count(*) AS n FROM remote_tasks WHERE agent_id = ? AND remote_task_id = ?",
+				agentId,
+				remoteTaskId,
+			)?.n !== 0
+		);
+	}
+
+	/** The text and sender of one task message. Undefined when the task or the message is gone. */
+	outboundMessage(taskId: string, messageId: string): OutboundMessage | undefined {
+		const row = this.#get<{ message: string; context_id: string; sender_name: string; host: string | null }>(
+			`SELECT m.message, m.context_id, m.sender_name, a.host FROM messages m LEFT JOIN agents a ON a.id = m.sender_agent
+			 WHERE m.task_id = ? AND m.id = ? ORDER BY m.seq DESC LIMIT 1`,
+			taskId,
+			messageId,
+		);
+		if (!row) return undefined;
+		return {
+			text: messageText(JSON.parse(row.message) as WireMessage),
+			contextId: row.context_id,
+			senderName: row.sender_name,
+			senderHost: row.host,
+		};
 	}
 
 	// ---------- inbox ----------

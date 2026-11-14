@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: readonly string[] = [
 	`
 	CREATE TABLE agents (
 		id TEXT PRIMARY KEY,
@@ -127,6 +127,36 @@ const MIGRATIONS: string[] = [
 	);
 	CREATE INDEX expect_reply_recipient ON expect_reply (recipient_agent, settled_at);
 	CREATE INDEX expect_reply_task ON expect_reply (task_id);
+	`,
+	`
+	CREATE TABLE external_outbox (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT NOT NULL,
+		task_id TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+		context_id TEXT NOT NULL,
+		message_id TEXT,
+		op TEXT NOT NULL CHECK (op IN ('send', 'cancel')),
+		attempts INTEGER NOT NULL DEFAULT 0,
+		first_at INTEGER NOT NULL,
+		next_at INTEGER NOT NULL
+	);
+	CREATE INDEX external_outbox_next ON external_outbox (next_at);
+
+	CREATE TABLE remote_tasks (
+		task_id TEXT NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
+		seq INTEGER NOT NULL,
+		agent_id TEXT NOT NULL,
+		context_id TEXT NOT NULL,
+		message_id TEXT,
+		remote_task_id TEXT,
+		remote_context_id TEXT,
+		state TEXT NOT NULL CHECK (state IN ('dispatched', 'running', 'done')),
+		dispatched_at INTEGER NOT NULL,
+		last_poll_at INTEGER,
+		PRIMARY KEY (task_id, seq)
+	);
+	CREATE INDEX remote_tasks_context ON remote_tasks (agent_id, context_id, state);
+	CREATE INDEX remote_tasks_remote ON remote_tasks (agent_id, remote_task_id);
 	`,
 ];
 

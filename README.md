@@ -197,6 +197,7 @@ node src/hub/main.ts --listen 127.0.0.1:8080 --data ./hub-data --tokens ./tokens
 | `--listen`      | `HUB_LISTEN`        | `0.0.0.0:8080`   | Bind address. Port `0` picks a free port. The hub prints `listening <port>` when ready.  |
 | `--data`        | `HUB_DATA`          | `/data`          | SQLite directory. `:memory:` keeps nothing.                                              |
 | `--tokens`      | `HUB_TOKENS_FILE`   | none             | Token file. Without it, every authenticated route answers 401.                           |
+| `--external`    | `HUB_EXTERNAL_FILE` | none             | External A2A agents, such as Hermes, that the hub sends tasks to.                        |
 | `--public-url`  | `HUB_PUBLIC_URL`    | from the request | Base URL on agent cards.                                                                 |
 | `--push-allow`  | `HUB_PUSH_ALLOW`    | none             | Host names, addresses, and CIDRs that push webhooks may reach although they are private. |
 | `--test-agents` | `HUB_TEST_AGENTS=1` | off              | Built-in `tck` and `echo` agents without a token, for conformance tests.                 |
@@ -216,6 +217,43 @@ The token file maps a principal name to a kind and the sha256 of its bearer toke
   - `GET /agents`: the registry. Host tokens only.
 - Push webhooks to loopback, private, link-local, and CGNAT addresses are refused unless `--push-allow` lists them.
 - CI runs the A2A TCK against the `tck` agent and the official Python SDK client against `echo`. A `v*` tag publishes the image `ghcr.io/orswn/pimon-hub` from `Containerfile`.
+
+### External agents
+
+The external file maps an agent id to an A2A server outside the hub. `SIGHUP` reloads it with the token file. Keep it at mode `0600`: it holds bearer tokens.
+
+```json
+{
+	"hermes": {
+		"name": "hermes",
+		"url": "http://hermes:9900/",
+		"token": "<bearer token that the agent accepts>",
+		"description": "Hermes Agent",
+		"pollMs": 10000,
+		"cardTtlMs": 600000,
+		"replyTimeoutMs": 960000
+	}
+}
+```
+
+- Required: `url` and `token`. The token must be visible ASCII. `name` defaults to the id and uses the same characters as an id. Unknown fields are an error.
+- More optional fields: `idleMs` (default `30000`), `retryMs` (default `60000`), and `offlineMs` (default `600000`).
+- pi sessions reach the agent at `/a2a/<id>` or `/a2a/@<name>`. The external name wins over a pi session with the same name.
+- The hub card takes `description` from the file and the skills from the card of the agent. The hub reads that card every `cardTtlMs` and keeps the last good copy. After 3 failed reads the agent shows offline.
+- The hub sends each task message with `SendStreamingMessage`. The text starts with `[from <sender name> on <host>]`.
+- One message per context runs at a time. The next message of the context waits.
+- The hub accepts only `task`, `question`, and `correction` messages for an external agent. It refuses other kinds.
+- A message with a task id continues that task only while the task waits for input. Else the hub refuses it.
+- A message without a task id continues the one task of its context that waits for input from the same sender.
+- A removed agent keeps its row and its `@<name>`. It shows offline. Its queued and running tasks fail.
+- Push is never sent to the agent. Hub clients use hub push on the hub task.
+- Errors:
+  - 401 or 403: the task fails.
+  - 429: the hub retries after `retryMs`, at most 5 times.
+  - Connection refused: the agent shows offline. The hub retries until `offlineMs`, then the task fails.
+  - No answer within `replyTimeoutMs`: the task fails.
+- Limit: when the stream drops, the hub polls `GetTask` every `pollMs`. It uses `ListTasks` when it has no remote task id. Hermes fails a task when its stream client goes away. So a dropped stream, or a hub restart during a task, fails the hub task with a text that says to ask again in the same context.
+- The push guard does not apply to these URLs. The operator writes them.
 
 ## Environment
 

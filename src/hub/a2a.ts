@@ -41,6 +41,7 @@ import {
 	type WireStreamResponse,
 	type WireTask,
 } from "./engine.ts";
+import type { ExternalCard } from "./gateway.ts";
 import { BUS_EXTENSION_URI, type DeliveryState } from "./protocol.ts";
 import type { BuiltinAgent } from "./test-agents.ts";
 
@@ -56,11 +57,29 @@ export interface CardInput {
 	baseUrl: string;
 	version: string;
 	builtin?: BuiltinAgent | undefined;
+	/** For an external agent: the configured description and the skills of its own card. */
+	external?: ExternalCard | undefined;
+}
+
+function skillsFor(
+	agent: AgentRow,
+	description: string,
+	builtin: BuiltinAgent | undefined,
+	external: ExternalCard | undefined,
+): unknown[] {
+	if (builtin) return [{ id: builtin.id, name: builtin.name, description, tags: ["test"] }];
+	if (agent.kind !== "external") return [{ id: "pi-session", name: "pi session", description, tags: ["coding"] }];
+	if (external && external.skills.length > 0) return external.skills;
+	return [{ id: "external", name: agent.name, description, tags: ["external"] }];
 }
 
 /** The card in A2A 1.0 JSON form. Static content only: no cwd, labels, or status. */
-export function buildCard({ agent, baseUrl, version, builtin }: CardInput): Record<string, unknown> {
-	const description = builtin?.description ?? `pi session on ${agent.host ?? "unknown host"}`;
+export function buildCard({ agent, baseUrl, version, builtin, external }: CardInput): Record<string, unknown> {
+	const description =
+		builtin?.description ??
+		(agent.kind === "external"
+			? (external?.description ?? `${agent.name}: an external A2A agent`)
+			: `pi session on ${agent.host ?? "unknown host"}`);
 	const card: Record<string, unknown> = {
 		name: agent.name,
 		description,
@@ -74,9 +93,7 @@ export function buildCard({ agent, baseUrl, version, builtin }: CardInput): Reco
 		},
 		defaultInputModes: ["text/plain"],
 		defaultOutputModes: ["text/plain"],
-		skills: builtin
-			? [{ id: builtin.id, name: builtin.name, description, tags: ["test"] }]
-			: [{ id: "pi-session", name: "pi session", description, tags: ["coding"] }],
+		skills: skillsFor(agent, description, builtin, external),
 	};
 	if (!builtin) {
 		card["securitySchemes"] = { bearer: { httpAuthSecurityScheme: { scheme: "bearer" } } };

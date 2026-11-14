@@ -15,6 +15,7 @@ async function main(): Promise<void> {
 		log,
 	};
 	if (config.tokensFile) options.tokensFile = config.tokensFile;
+	if (config.externalFile) options.externalFile = config.externalFile;
 	if (config.publicUrl) options.publicUrl = config.publicUrl;
 	if (!config.tokensFile && !config.testAgents) log("warning: no token file; only /healthz and cards answer");
 	const hub = await startHub(options);
@@ -41,6 +42,13 @@ async function main(): Promise<void> {
 			log("SIGHUP: tokens reloaded");
 		} catch (error) {
 			log(`SIGHUP: token reload failed, old tokens kept: ${String(error)}`);
+		}
+		if (!config.externalFile) return;
+		try {
+			hub.reloadExternal();
+			log(`SIGHUP: external agents reloaded: ${hub.hub.gateway.size}`);
+		} catch (error) {
+			log(`SIGHUP: external reload failed, old agents kept: ${String(error)}`);
 		}
 	});
 }

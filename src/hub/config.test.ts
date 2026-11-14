@@ -8,6 +8,7 @@ describe("config", () => {
 			port: 8080,
 			data: "/data",
 			tokensFile: undefined,
+			externalFile: undefined,
 			testAgents: false,
 			publicUrl: undefined,
 			presenceGraceMs: 20_000,
@@ -39,8 +40,11 @@ describe("config", () => {
 			HUB_TOKENS_FILE: "/t.json",
 			HUB_TEST_AGENTS: "1",
 			HUB_PUBLIC_URL: "https://hub.example/",
+			HUB_EXTERNAL_FILE: "/e.json",
 		};
+		expect(loadConfig(["--external", "/flag-e.json"], env).externalFile).toBe("/flag-e.json");
 		expect(loadConfig([], env)).toMatchObject({
+			externalFile: "/e.json",
 			host: "127.0.0.1",
 			port: 9000,
 			data: "/env",

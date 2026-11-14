@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { Principal } from "./auth.ts";
+import { ANONYMOUS, type Principal } from "./auth.ts";
 import { openDb } from "./db.ts";
 import { type Caller, defaultAgentName, Engine, HubError, type WireMessage } from "./engine.ts";
 import { BUS_EXTENSION_URI, HUB_PROTOCOL, type LinkEvent } from "./protocol.ts";
@@ -277,6 +277,162 @@ describe("engine: task lifecycle", () => {
 		).toBe("invalid");
 		expect(t.engine.readTask(id)?.status.state).toBe("TASK_STATE_SUBMITTED");
 		expect(t.events.length).toBe(before);
+	});
+});
+
+describe("engine: context-level follow-ups", () => {
+	const asker: Caller = { principal: MARS, agent: "asker" };
+	const ask = (t: ReturnType<typeof setup>, agentId: string, caller: Caller, text: string, contextId = "ctx-1") =>
+		t.engine.send({ agentId, caller, message: message(text, { contextId }) });
+
+	it("continues the one interrupted task when a peer sends again in its context", () => {
+		const t = setup();
+		t.register("a1");
+		const id = ask(t, "a1", fromHermes, "plan").task?.id ?? "";
+		t.engine.linkUpdate("a1", id, { state: "input-required", text: "which day?" });
+		const next = ask(t, "a1", fromHermes, "monday");
+		expect(next.created).toBe(false);
+		expect(next.task?.id).toBe(id);
+		expect(next.task?.status.state).toBe("TASK_STATE_WORKING");
+		expect(next.task?.history?.map((m) => m.messageId)).toEqual(["m-plan", expect.any(String), "m-monday"]);
+		expect(t.events.at(-1)?.event.payload).toMatchObject({ taskId: id, messageId: "m-monday", taskState: "working" });
+	});
+
+	it("starts a new task when the context has two interrupted tasks, none, or another sender", () => {
+		const t = setup();
+		t.register("a1");
+		const first = ask(t, "a1", fromHermes, "one").task?.id ?? "";
+		const second = ask(t, "a1", fromHermes, "two").task?.id ?? "";
+		t.engine.linkUpdate("a1", first, { state: "input-required", text: "?" });
+		t.engine.linkUpdate("a1", second, { state: "input-required", text: "?" });
+		const third = ask(t, "a1", fromHermes, "three");
+		expect(third.created).toBe(true);
+		expect([first, second]).not.toContain(third.task?.id);
+		expect(ask(t, "a1", fromHermes, "other context", "ctx-2").created).toBe(true);
+		const other: Caller = { principal: { name: "athena", kind: "peer" } };
+		t.engine.linkUpdate("a1", second, { state: "completed" });
+		expect(ask(t, "a1", other, "four").created).toBe(true);
+		expect(t.engine.readTask(first)?.history).toHaveLength(2);
+	});
+
+	it("keeps pi-to-pi traffic on explicit task ids", () => {
+		const t = setup();
+		t.register("asker");
+		t.register("helper");
+		const id = ask(t, "helper", asker, "go").task?.id ?? "";
+		t.engine.linkUpdate("helper", id, { state: "input-required", text: "which?" });
+		const next = ask(t, "helper", asker, "that");
+		expect(next.created).toBe(true);
+		expect(next.task?.id).not.toBe(id);
+		expect(t.engine.readTask(id)?.status.state).toBe("TASK_STATE_INPUT_REQUIRED");
+	});
+
+	it("continues the interrupted task of an external agent when its pi sender writes in the context", () => {
+		const t = setup();
+		t.register("asker");
+		t.register("asker-2");
+		t.engine.ensureExternal("hermes", "hermes");
+		const id = ask(t, "hermes", asker, "research").task?.id ?? "";
+		t.engine.applyChange(id, { state: "TASK_STATE_INPUT_REQUIRED", message: t.engine.agentMessage("which topic?") });
+		expect(ask(t, "hermes", { principal: MARS, agent: "asker-2" }, "mine").created).toBe(true);
+		const next = ask(t, "hermes", asker, "A2A");
+		expect(next.created).toBe(false);
+		expect(next.task?.id).toBe(id);
+		expect(next.task?.status.state).toBe("TASK_STATE_WORKING");
+	});
+
+	it("queues a send for each task message and swaps a waiting send for a cancel", () => {
+		const t = setup();
+		t.register("asker", { name: "bee" });
+		t.engine.ensureExternal("hermes", "Hermes");
+		let kicks = 0;
+		t.engine.onExternal(() => kicks++);
+		const first = ask(t, "hermes", asker, "research").task;
+		const id = first?.id ?? "";
+		expect(kicks).toBe(1);
+		expect(t.engine.externalJobs()).toMatchObject([{ agentId: "hermes", taskId: id, op: "send" }]);
+		const remote = t.engine.startRemote(t.engine.externalJobs()[0]!);
+		expect(t.engine.externalJobs()).toEqual([]);
+		expect(t.engine.remoteBusy("hermes", first?.contextId ?? "")).toBe(true);
+		t.engine.remoteDone(remote);
+		t.engine.applyChange(id, { state: "TASK_STATE_INPUT_REQUIRED", message: t.engine.agentMessage("which?") });
+		const inbox = t.engine.inbox("asker", true, 10)[0];
+		expect(inbox?.from).toEqual({ agent: "hermes", name: "Hermes", kind: "external" });
+		const next = ask(t, "hermes", asker, "A2A");
+		expect(next.task?.id).toBe(id);
+		const [job] = t.engine.externalJobs();
+		expect(job).toMatchObject({ taskId: id, op: "send" });
+		expect(t.engine.outboundMessage(id, job?.messageId ?? "")).toEqual({
+			text: "A2A",
+			contextId: first?.contextId,
+			senderName: "bee",
+			senderHost: "mars",
+		});
+		t.engine.cancel("hermes", asker, id);
+		expect(t.engine.externalJobs()).toMatchObject([{ taskId: id, op: "cancel" }]);
+	});
+
+	it("refuses a message to an external agent that makes no task", () => {
+		const t = setup();
+		t.register("asker");
+		t.engine.ensureExternal("hermes", "hermes");
+		const note = () =>
+			t.engine.send({
+				agentId: "hermes",
+				caller: asker,
+				message: message("fyi", { contextId: "ctx-1" }, { kind: "note" }),
+			});
+		expect(note).toThrow("external agents take only task, question, or correction messages");
+		expect(reason(note)).toBe("invalid");
+		expect(t.engine.inbox("hermes", false, 10)).toEqual([]);
+		for (const kind of ["question", "correction"]) {
+			const sent = t.engine.send({
+				agentId: "hermes",
+				caller: asker,
+				message: message(kind, { contextId: `ctx-${kind}` }, { kind }),
+			});
+			expect(sent.created).toBe(true);
+		}
+	});
+
+	it("refuses a follow-up to an external task that does not wait for input", () => {
+		const t = setup();
+		t.register("asker");
+		t.engine.ensureExternal("hermes", "hermes");
+		const id = ask(t, "hermes", asker, "research").task?.id ?? "";
+		const follow = (text: string) => () =>
+			t.engine.send({ agentId: "hermes", caller: asker, message: message(text, { taskId: id }) });
+		expect(follow("queued")).toThrow(
+			`Task ${id} of external agent hermes takes a follow-up only when it waits for input`,
+		);
+		t.engine.applyChange(id, { state: "TASK_STATE_WORKING" });
+		expect(reason(follow("running"))).toBe("invalid");
+		expect(t.engine.externalJobs()).toHaveLength(1);
+		t.engine.applyChange(id, { state: "TASK_STATE_AUTH_REQUIRED", message: t.engine.agentMessage("login") });
+		expect(follow("done")().task?.id).toBe(id);
+		expect(t.engine.externalJobs()).toHaveLength(2);
+	});
+
+	it("leaves anonymous callers and built-in agents on explicit task ids", () => {
+		const t = setup();
+		t.engine.ensureBuiltin("tck", "tck");
+		t.register("a1");
+		const anonymous: Caller = { principal: ANONYMOUS };
+		const first = ask(t, "a1", anonymous, "plan").task?.id ?? "";
+		t.engine.linkUpdate("a1", first, { state: "input-required", text: "which?" });
+		expect(ask(t, "a1", anonymous, "other").created).toBe(true);
+		const builtin = ask(t, "tck", fromHermes, "plan", "ctx-2").task?.id ?? "";
+		t.engine.applyChange(builtin, { state: "TASK_STATE_INPUT_REQUIRED", message: t.engine.agentMessage("which?") });
+		expect(ask(t, "tck", fromHermes, "other", "ctx-2").created).toBe(true);
+	});
+
+	it("keeps a pi id out of the external rows", () => {
+		const t = setup();
+		t.register("asker");
+		expect(() => t.engine.ensureExternal("asker", "x")).toThrow(HubError);
+		expect(t.engine.externalJobs()).toEqual([]);
+		ask(t, "asker", { principal: MARS, agent: "asker" }, "self");
+		expect(t.engine.externalJobs()).toEqual([]);
 	});
 });
 

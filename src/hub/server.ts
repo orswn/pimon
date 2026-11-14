@@ -10,6 +10,8 @@ import { ANONYMOUS, authenticate, loadTokens, parseTokens, type Principal, Token
 import { type HubConfig, parseListen } from "./config.ts";
 import { openDb } from "./db.ts";
 import { type AgentRow, type Caller, Engine, HubError } from "./engine.ts";
+import { type ExternalAgentConfig, loadExternal } from "./external.ts";
+import { ExternalGateway, type GatewayOptions } from "./gateway.ts";
 import { LinkHub } from "./link.ts";
 import { AGENT_HEADER } from "./protocol.ts";
 import { PushSender, type PushOptions } from "./push.ts";
@@ -42,6 +44,10 @@ export interface StartHubOptions {
 	dataDir: string;
 	tokensFile?: string;
 	tokens?: TokenSpec | TokenTable;
+	/** The external agent file. `external` wins when both are set. */
+	externalFile?: string;
+	external?: ExternalAgentConfig[];
+	gateway?: GatewayOptions;
 	testAgents?: boolean;
 	publicUrl?: string;
 	presenceGraceMs?: number;
@@ -58,6 +64,8 @@ export interface RunningHub {
 	hub: Hub;
 	/** Reads `tokensFile` again. Keeps the old tokens when the file is bad. */
 	reloadTokens(): void;
+	/** Reads `externalFile` again. Keeps the old agents when the file is bad. */
+	reloadExternal(): void;
 	close(): Promise<void>;
 }
 
@@ -69,6 +77,8 @@ export async function startHub(options: StartHubOptions): Promise<RunningHub> {
 		if (options.tokens) return parseTokens(JSON.stringify(options.tokens));
 		return loadTokens(options.tokensFile);
 	};
+	const readExternal = (): ExternalAgentConfig[] => options.external ?? loadExternal(options.externalFile);
+	const external = readExternal();
 	const db = openDb(options.dataDir);
 	const hubOptions: HubOptions = {
 		config: {
@@ -82,8 +92,10 @@ export async function startHub(options: StartHubOptions): Promise<RunningHub> {
 		},
 		db,
 		tokens: readTokens(),
+		external,
 	};
 	if (options.push) hubOptions.push = options.push;
+	if (options.gateway) hubOptions.gateway = options.gateway;
 	if (options.log) hubOptions.log = options.log;
 	const hub = new Hub(hubOptions);
 	let bound: number;
@@ -101,6 +113,7 @@ export async function startHub(options: StartHubOptions): Promise<RunningHub> {
 		port: bound,
 		hub,
 		reloadTokens: () => hub.setTokens(readTokens()),
+		reloadExternal: () => hub.gateway.configure(readExternal()),
 		close: async () => {
 			if (closed) return;
 			closed = true;
@@ -117,7 +130,9 @@ export interface HubOptions {
 	>;
 	db: DatabaseSync;
 	tokens: TokenTable;
+	external?: ExternalAgentConfig[];
 	push?: PushOptions;
+	gateway?: GatewayOptions;
 	log?: (line: string) => void;
 }
 
@@ -211,6 +226,7 @@ export class Hub {
 	readonly engine: Engine;
 	readonly link: LinkHub;
 	readonly push: PushSender;
+	readonly gateway: ExternalGateway;
 	readonly server: Server;
 	readonly #config: HubOptions["config"];
 	readonly #builtins: Map<string, BuiltinAgent>;
@@ -231,6 +247,8 @@ export class Hub {
 			heartbeatMs: options.config.heartbeatMs,
 		});
 		this.push = new PushSender(this.engine, { log: this.#log, ...options.push, guard });
+		this.gateway = new ExternalGateway(this.engine, { log: this.#log, ...options.gateway });
+		this.gateway.configure(options.external ?? []);
 		this.server = createServer((req, res) => {
 			this.#handle(req, res).catch((error: unknown) => sendError(res, error, this.#log));
 		});
@@ -248,6 +266,7 @@ export class Hub {
 			.map((agent) => agent.id);
 		this.link.start(online);
 		this.push.start();
+		this.gateway.start();
 		this.engine.sweep();
 		this.#sweep = setInterval(() => {
 			try {
@@ -270,6 +289,7 @@ export class Hub {
 	async close(): Promise<void> {
 		if (this.#sweep) clearInterval(this.#sweep);
 		this.push.stop();
+		this.gateway.stop();
 		this.link.stop();
 		const closed = new Promise<void>((resolve) => this.server.close(() => resolve()));
 		this.server.closeAllConnections();
@@ -355,6 +375,7 @@ export class Hub {
 			baseUrl: this.#baseUrl(req),
 			version: HUB_VERSION,
 			builtin: this.#builtins.get(agent.id),
+			external: this.gateway.card(agent.id),
 		});
 	}
 

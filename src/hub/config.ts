@@ -6,6 +6,8 @@ export interface HubConfig {
 	port: number;
 	data: string;
 	tokensFile: string | undefined;
+	/** External A2A agents, such as Hermes, that the hub sends tasks to. */
+	externalFile: string | undefined;
 	testAgents: boolean;
 	publicUrl: string | undefined;
 	presenceGraceMs: number;
@@ -41,6 +43,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): HubConfig {
 			listen: { type: "string" },
 			data: { type: "string" },
 			tokens: { type: "string" },
+			external: { type: "string" },
 			"test-agents": { type: "boolean" },
 			"public-url": { type: "string" },
 			"push-allow": { type: "string" },
@@ -64,6 +67,7 @@ export function loadConfig(argv: string[], env: NodeJS.ProcessEnv): HubConfig {
 		...listen,
 		data: values.data ?? env["HUB_DATA"] ?? "/data",
 		tokensFile: values.tokens ?? (env["HUB_TOKENS_FILE"] || undefined),
+		externalFile: values.external ?? (env["HUB_EXTERNAL_FILE"] || undefined),
 		testAgents,
 		publicUrl: publicUrl ? publicUrl.replace(/\/+$/, "") : undefined,
 		presenceGraceMs: positiveInt(env["HUB_PRESENCE_GRACE_MS"], 20_000, "HUB_PRESENCE_GRACE_MS"),

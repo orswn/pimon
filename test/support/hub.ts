@@ -52,11 +52,13 @@ export interface HubProcess {
 export async function startHubProcess(options: {
 	dataDir: string;
 	tokensFile?: string;
+	externalFile?: string;
 	testAgents?: boolean;
 	env?: Record<string, string>;
 }): Promise<HubProcess> {
 	const args = [HUB_MAIN, "--listen", "127.0.0.1:0", "--data", options.dataDir];
 	if (options.tokensFile) args.push("--tokens", options.tokensFile);
+	if (options.externalFile) args.push("--external", options.externalFile);
 	if (options.testAgents) args.push("--test-agents");
 	const child = spawn(process.execPath, ["--no-warnings", ...args], {
 		stdio: ["ignore", "pipe", "pipe"],
