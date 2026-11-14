@@ -14,12 +14,19 @@ const MIN = 60_000;
 const DAY = 24 * 60 * MIN;
 const skew = { wall: 0, mono: 0, uptime: 0 };
 const host = { bootId: "boot-a" as string | undefined };
+// os.uptime() has a 10 ms step. Read raw, it puts up to 10 ms of false suspend into each gap, and a
+// suspend of 2m can show as 1m. So uptime runs on the same monotonic clock and differs only by the skew.
+const baseMono = process.hrtime.bigint();
+const baseUptime = uptime();
 const clock: Clock = {
-	now: () => ({
-		wall: Date.now() + skew.wall,
-		mono: process.hrtime.bigint() + BigInt(skew.mono) * 1_000_000n,
-		uptime: uptime() + skew.uptime / 1000,
-	}),
+	now: () => {
+		const mono = process.hrtime.bigint();
+		return {
+			wall: Date.now() + skew.wall,
+			mono: mono + BigInt(skew.mono) * 1_000_000n,
+			uptime: baseUptime + Number(mono - baseMono) / 1e9 + skew.uptime / 1000,
+		};
+	},
 	offsetMinutes: () => 420,
 	bootId: () => host.bootId,
 };
