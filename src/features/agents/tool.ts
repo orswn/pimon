@@ -199,7 +199,7 @@ function myChildren(host: AgentsHost): ChildRecord[] {
 function resolveChild(host: AgentsHost, reference: string | undefined): ChildRecord {
 	requireHub(host.bus);
 	const children = myChildren(host);
-	if (children.length === 0) throw new Error("No children have been spawned from this session.");
+	if (children.length === 0) throw new Error("No child of this session is running.");
 	if (!reference) {
 		if (children.length === 1 && children[0]) return children[0];
 		throw new Error(`Name the child. Current children: ${children.map((child) => child.name).join(", ")}`);
@@ -401,7 +401,7 @@ export async function listAction(host: AgentsHost): Promise<ActionResult> {
 	});
 	pruneGoneChildren(host, agents);
 	const children = myChildren(host);
-	if (children.length === 0) return { text: "No children spawned from this session.", details: { count: 0 } };
+	if (children.length === 0) return { text: "No child of this session is running.", details: { count: 0 } };
 	const parts = await Promise.all(children.map((child) => describeChild(host, child, agents.get(child.spawnId))));
 	return { text: parts.join("\n\n"), details: { count: children.length } };
 }

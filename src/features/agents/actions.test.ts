@@ -531,6 +531,16 @@ describe("child lifecycle", () => {
 		expect(h.records.mine(SELF).map((record) => record.name)).toEqual(["live-worker"]);
 	});
 
+	it("says that no child runs after the last child is gone", async () => {
+		const h = setup(root);
+		const gone = "33333333-3333-7333-8333-333333333333";
+		storedRecord(h, { spawnId: gone, name: "done-worker" });
+		writePidFile(h.paths, gone, { pid: DEAD_PID, birth: "0" });
+		h.rows.set(gone, row(gone, { name: "done-worker", lastSeenAt: new Date().toISOString() }));
+		expect((await listAction(h.host)).text).toBe("No child of this session is running.");
+		await expect(closeAction(h.host, undefined)).rejects.toThrow("No child of this session is running.");
+	});
+
 	it("says the pane is not managed when an offline tmux child cannot be closed", async () => {
 		const h = setup(root);
 		storedRecord(h, { placement: tmuxPane });

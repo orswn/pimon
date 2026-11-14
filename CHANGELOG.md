@@ -7,6 +7,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 ### Fixed
 
 - `pi_bus` send and reply results show an exact agent id as written, such as `id:hermes`, not `id:=hermes`.
+- `pi_agents` says `No child of this session is running.` once its children are gone. It said that no child was spawned.
 
 ## [2.0.0] - 2026-11-14
 
