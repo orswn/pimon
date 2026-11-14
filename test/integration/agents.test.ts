@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxText, fauxToolCall, type Message } from "@earendil-works/pi-ai";
@@ -7,6 +7,7 @@ import { type AgentSession, SessionManager } from "@earendil-works/pi-coding-age
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { type AnyFeature, defineFeature } from "../../src/core/feature.ts";
 import { clearReloadState } from "../../src/core/reload-state.ts";
+import { sessionKey } from "../../src/features/agents/adhoc.ts";
 import { createAgentsFeature } from "../../src/features/agents/index.ts";
 import type { Placer, PlacementRequest } from "../../src/features/agents/placement.ts";
 import {
@@ -22,9 +23,10 @@ import {
 } from "../../src/features/agents/spawn-file.ts";
 import { DIGEST_TYPE } from "../../src/features/bus/index.ts";
 import { AGENTS_CACHE_MS } from "../../src/features/bus/protocol.ts";
+import { bus } from "../../src/features/bus/index.ts";
 import { features } from "../../src/features/index.ts";
 import { busCapture, busHarness, customMessages, hex, toolTexts, until } from "../support/bus.ts";
-import type { Harness, HarnessOptions } from "../support/harness.ts";
+import { createHarness, type Harness, type HarnessOptions } from "../support/harness.ts";
 import { type HubPeer, startPeer, startTestHub, type TestHub } from "../support/hub.ts";
 
 const capture = busCapture();
@@ -436,6 +438,42 @@ describe("agents feature", () => {
 			const rendered = sections(h.requests[0]);
 			expect(rendered["delegated"]).toBeUndefined();
 			expect(rendered["role"]).toBeUndefined();
+		});
+	});
+
+	describe("session roles", () => {
+		const rolesCall = () =>
+			fauxAssistantMessage(fauxToolCall("pi_agents", { action: "roles" }), { stopReason: "toolUse" });
+
+		function oldRoleDir(key: string): string {
+			const dir = join(paths.roles, key);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "worker.md"), "---\nname: worker\n---\nYou work.\n");
+			const dayAgo = (Date.now() - 25 * 60 * 60_000) / 1000;
+			utimesSync(dir, dayAgo, dayAgo);
+			return dir;
+		}
+
+		it("keeps the old roles of a session that is online on the hub and removes those of a gone session", async () => {
+			const live = await peer("long-lived");
+			const kept = oldRoleDir(sessionKey(live.id));
+			const gone = oldRoleDir(sessionKey(randomUUID()));
+			const h = await start({ ui: {} });
+			h.respond([rolesCall(), fauxAssistantMessage(fauxText("ok"))]);
+			await h.session.prompt("roles");
+			await until(() => !existsSync(gone));
+			expect(existsSync(kept)).toBe(true);
+		});
+
+		it("lists roles without a hub and removes no session roles", async () => {
+			const gone = oldRoleDir(sessionKey(randomUUID()));
+			const agents = createAgentsFeature({ paths });
+			harness = await createHarness({ features: [bus, agents, capture.feature], ui: {} });
+			harness.respond([rolesCall(), fauxAssistantMessage(fauxText("ok"))]);
+			await harness.session.prompt("roles");
+			expect(toolTexts(harness)[0]).toMatch(/^No roles found/);
+			await pause(200);
+			expect(existsSync(gone)).toBe(true);
 		});
 	});
 

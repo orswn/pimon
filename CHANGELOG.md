@@ -8,6 +8,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - `pi_bus` send and reply results show an exact agent id as written, such as `id:hermes`, not `id:=hermes`.
 - `pi_agents` says `No child of this session is running.` once its children are gone. It said that no child was spawned.
+- `agents` no longer deletes the session roles of a session that is still online on the hub. It deleted the roles of every other session after one day. Without a hub, it deletes no session roles.
 
 ## [2.0.0] - 2026-11-14
 

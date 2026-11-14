@@ -13,6 +13,7 @@ import {
 	startChildSession,
 } from "./child.ts";
 import { registerCommands, showAgentsList } from "./commands.ts";
+import { sessionKey } from "./adhoc.ts";
 import { createHerdrPlacer, type Placer } from "./placement.ts";
 import { AGENTS_PROMPT, delegatedPrompt } from "./prompt.ts";
 import { ChildRecords } from "./records.ts";
@@ -75,7 +76,14 @@ export function createAgentsFeature(options: AgentsFeatureOptions = {}) {
 				pruneOnce(key) {
 					if (pruned.done) return;
 					pruned.done = true;
-					pruneFiles(paths, key);
+					void Promise.resolve()
+						.then(() => bus.agents(false))
+						.then(
+							(agents) => new Set(agents.map((agent) => sessionKey(agent.id))),
+							() => undefined,
+						)
+						.then((live) => pruneFiles(paths, key, live))
+						.catch(() => {});
 				},
 			};
 

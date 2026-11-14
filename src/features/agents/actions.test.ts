@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -691,7 +691,7 @@ describe("child lifecycle", () => {
 		const liveV1 = "11111111-2222-4333-8444-666666666666";
 		v1(oldV1, 25 * 60 * 60_000);
 		v1(liveV1, 60 * 60_000);
-		pruneFiles(h.paths, "sess");
+		pruneFiles(h.paths, "sess", new Set());
 		expect(h.records.all().map((record) => record.spawnId)).toEqual([liveV1, recorded.spawnId]);
 		expect(existsSync(files.launcher)).toBe(true);
 		expect(existsSync(files.oldHook)).toBe(false);
@@ -700,6 +700,21 @@ describe("child lifecycle", () => {
 		expect(existsSync(files.oldPid)).toBe(false);
 		expect(existsSync(files.keptHook)).toBe(true);
 		expect(existsSync(files.keptPid)).toBe(true);
+	});
+
+	it("keeps the session roles of a live session and of every session when the hub list is missing", () => {
+		const h = setup(root);
+		const dayAgo = (Date.now() - 25 * 60 * 60_000) / 1000;
+		for (const key of ["sess", "live", "gone"]) {
+			const dir = join(h.paths.roles, key);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "worker.md"), "x");
+			utimesSync(dir, dayAgo, dayAgo);
+		}
+		pruneFiles(h.paths, "sess", undefined);
+		expect(readdirSync(h.paths.roles).sort()).toEqual(["gone", "live", "sess"]);
+		pruneFiles(h.paths, "sess", new Set(["live"]));
+		expect(readdirSync(h.paths.roles).sort()).toEqual(["live", "sess"]);
 	});
 
 	it("leaves no spawn file behind for a child that read it", async () => {

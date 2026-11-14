@@ -923,8 +923,13 @@ export async function runToolAction(
 	}
 }
 
-export function pruneFiles(paths: AgentPaths, keepRoleKey: string): void {
-	pruneOld(paths.roles, keepRoleKey);
+export function pruneFiles(
+	paths: AgentPaths,
+	keepRoleKey: string,
+	liveRoleKeys: ReadonlySet<string> | undefined,
+): void {
+	// A long session keeps its roles past a day. Without the hub list, no session's roles go.
+	if (liveRoleKeys) pruneOld(paths.roles, keepRoleKey, (entry) => liveRoleKeys.has(entry));
 	const records = new ChildRecords(paths);
 	// pimon 1.x keyed records on a process owner id and stored a control token. No session id matches them.
 	// A 1.x parent can still run on this host during an upgrade, so its records get a day.
