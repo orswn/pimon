@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { pbkdf2, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionUIContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI, TuiMouseEvent } from "@earendil-works/pi-tui";
@@ -109,11 +110,19 @@ async function start(options: StartOptions = {}) {
 	});
 	const indicators: unknown[] = [];
 	const cacheDir = options.cacheDir ?? join(mkdtempSync(join(tmpdir(), "statusline-cache-")), "pimon", "statusline");
+	let fetches = 0;
+	let onFetch: (() => void) | undefined;
+	const innerFetch = options.fetch ?? usageFetch().fetch;
+	const countedFetch = ((...args: Parameters<typeof fetch>) => {
+		fetches++;
+		onFetch?.();
+		return innerFetch(...args);
+	}) as typeof fetch;
 	const h = await createHarness({
 		features: [
 			...(options.before ?? []),
 			eventsProbe,
-			createStatuslineFeature({ exec: gitRecorder().exec, fetch: usageFetch().fetch, ...options, cacheDir }),
+			createStatuslineFeature({ exec: gitRecorder().exec, ...options, fetch: countedFetch, cacheDir }),
 		],
 		...(options.settings ? { settings: options.settings } : {}),
 		setupAgentDir: (dir) => {
@@ -146,6 +155,7 @@ async function start(options: StartOptions = {}) {
 	});
 	harness = h;
 	let renders = 0;
+	let onRender: (() => void) | undefined;
 	const branchListeners: (() => void)[] = [];
 	const footerData: FooterData = {
 		getGitBranch: () => "fallback-branch",
@@ -159,27 +169,43 @@ async function start(options: StartOptions = {}) {
 	let component: (Component & { dispose?(): void }) | undefined;
 	const mount = () => {
 		if (!factory) throw new Error("statusline did not install a footer");
-		const tui = { requestRender: () => renders++ } as unknown as TUI;
+		const tui = {
+			requestRender: () => {
+				renders++;
+				onRender?.();
+			},
+		} as unknown as TUI;
 		component = factory(tui, theme, footerData);
 		return component;
 	};
 	const line = (width = 200) => strip((component ?? mount()).render(width).join("\n"));
 	const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
-	const usageDone = () => {
-		if (!existsSync(cacheDir)) return false;
-		const names = readdirSync(cacheDir);
-		return names.some((name) => name.endsWith(".json")) && !names.some((name) => name.endsWith(".claim"));
-	};
-	/** Renders once and waits until the usage check wrote its cache, released its claim, and asked for a render. */
+	const claimHeld = () => existsSync(cacheDir) && readdirSync(cacheDir).some((name) => name.endsWith(".claim"));
+	/**
+	 * Renders once and waits until the usage fetch that this render starts is cached and rendered.
+	 * Git status results and events also render, and the cache file of an earlier check can exist,
+	 * so only a render after a new fetch, with the claim released, counts.
+	 */
 	const checked = async () => {
-		const before = renders;
+		const before = fetches;
 		line();
 		const deadline = Date.now() + 5_000;
-		// A git status result also asks for a render, so a render alone does not mean the usage check ended.
-		while (renders === before || !usageDone()) {
-			if (Date.now() > deadline) throw new Error("no re-render after the usage check");
-			await new Promise((resolve) => setTimeout(resolve, 10));
+		const next = (listen: (wake: () => void) => void, failure: string) =>
+			new Promise<void>((resolve, reject) => {
+				const timer = setTimeout(() => reject(new Error(failure)), Math.max(0, deadline - Date.now()));
+				listen(() => {
+					clearTimeout(timer);
+					resolve();
+				});
+			});
+		try {
+			while (fetches === before) await next((wake) => (onFetch = wake), "no usage fetch after the render");
+			while (claimHeld()) await next((wake) => (onRender = wake), "no render after the usage fetch");
+		} finally {
+			onFetch = onRender = undefined;
 		}
+		// The poller releases its claim and then asks for a render, with only microtasks between the two.
+		await new Promise((resolve) => setImmediate(resolve));
 	};
 	return {
 		h,
@@ -218,6 +244,12 @@ async function start(options: StartOptions = {}) {
 			for (const listener of branchListeners) listener();
 		},
 	};
+}
+
+/** Keeps each libuv pool thread busy for a while, so file reads wait like on a loaded host. */
+function occupyThreadPool(): Promise<unknown> {
+	const threads = Number(process.env["UV_THREADPOOL_SIZE"]) || 4;
+	return Promise.all(Array.from({ length: threads }, () => promisify(pbkdf2)("x", "y", 400_000, 32, "sha256")));
 }
 
 async function runTurn(h: Harness) {
@@ -270,7 +302,10 @@ describe("statusline footer", () => {
 		expect(git.calls).toHaveLength(before);
 	});
 
-	it("polls usage at the configured interval", async () => {
+	it.each([
+		["", false],
+		[" while file reads wait", true],
+	])("polls usage at the configured interval%s", async (_name, slowFiles) => {
 		let now = Date.now();
 		const usage = usageFetch();
 		const s = await start({
@@ -286,11 +321,13 @@ describe("statusline footer", () => {
 		await s.settle();
 		expect(usage.urls).toHaveLength(1);
 		now += 1;
-		s.line();
-		// checked() can return early here: the first cache file already exists, and a git status result also renders.
-		const deadline = Date.now() + 5_000;
-		while (usage.urls.length < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(usage.urls).toHaveLength(2);
+		const busy = slowFiles ? occupyThreadPool() : Promise.resolve();
+		try {
+			await s.checked();
+			expect(usage.urls).toHaveLength(2);
+		} finally {
+			await busy;
+		}
 	});
 
 	it("recomputes totals after an entry was added and the leaf moved back between renders", async () => {
