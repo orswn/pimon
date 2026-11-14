@@ -134,7 +134,7 @@ describe("bus feature on a hub", () => {
 		const h = await start();
 		const id = h.session.sessionManager.getSessionId();
 		expect(busService().id).toBe(id);
-		const listed = hub.running.hub.engine.listAgents(false);
+		const listed = await hub.agents();
 		expect(listed.find((agent) => agent.id === id)).toMatchObject({ kind: "pi", online: true });
 	});
 
@@ -391,10 +391,10 @@ describe("bus feature on a hub", () => {
 		const h = await start({ ui: {} });
 		const [set] = await busTool(h, [{ action: "set_status", body: "testing\nstep 4" }]);
 		expect(set).toBe("Status set: testing step 4");
-		const own = hub.running.hub.engine.listAgents(false).find((agent) => agent.id === busService().id);
+		const own = (await hub.agents()).find((agent) => agent.id === busService().id);
 		expect(own?.status.text).toBe("testing step 4");
 		expect(await busCommand(h, "/bus-status")).toBe("Status cleared.");
-		const cleared = hub.running.hub.engine.listAgents(false).find((agent) => agent.id === busService().id);
+		const cleared = (await hub.agents()).find((agent) => agent.id === busService().id);
 		expect(cleared?.status.text).toBe("");
 		const entries = h.session.sessionManager
 			.getEntries()
@@ -407,14 +407,22 @@ describe("bus feature on a hub", () => {
 	});
 
 	it("saves no status entry for a text that the hub refuses", async () => {
-		const h = await start({ ui: {} });
-		hub.running.hub.engine.db.prepare("DELETE FROM agents WHERE id = ?").run(busService().id);
-		const [refused] = await busTool(h, [{ action: "set_status", body: "lost row" }]);
-		expect(refused).toContain("the hub refused the request");
-		const entries = h.session.sessionManager
-			.getEntries()
-			.filter((entry) => entry.type === "custom" && entry.customType === STATUS_ENTRY);
-		expect(entries).toEqual([]);
+		const own = await startTestHub();
+		try {
+			harness = await busHarness(own.url, capture, { ui: {} });
+			const h = harness;
+			await own.revokeHostToken();
+			// The hub must keep the open link stream. Else the bus saves the status offline and sends nothing.
+			expect(capture.get().online).toBe(true);
+			const [refused] = await busTool(h, [{ action: "set_status", body: "revoked token" }]);
+			expect(refused).toContain("the hub refused the request");
+			const entries = h.session.sessionManager
+				.getEntries()
+				.filter((entry) => entry.type === "custom" && entry.customType === STATUS_ENTRY);
+			expect(entries).toEqual([]);
+		} finally {
+			await own.close();
+		}
 	});
 
 	it("restores its saved status text at a restart when the hub row has none", async () => {
@@ -426,10 +434,9 @@ describe("bus feature on a hub", () => {
 				return manager;
 			},
 		});
-		await until(() => hub.running.hub.engine.listAgents(false).find((agent) => agent.id === id)?.status.text !== "");
-		expect(hub.running.hub.engine.listAgents(false).find((agent) => agent.id === id)?.status.text).toBe(
-			"reviewing the parser",
-		);
+		const statusText = async () => (await hub.agents()).find((agent) => agent.id === id)?.status.text;
+		await until(async () => ![undefined, ""].includes(await statusText()));
+		expect(await statusText()).toBe("reviewing the parser");
 	});
 
 	it("does not restore a status entry that a fork copied from another session", async () => {
@@ -441,9 +448,9 @@ describe("bus feature on a hub", () => {
 				return manager;
 			},
 		});
-		await until(() => hub.running.hub.engine.listAgents(false).some((agent) => agent.id === id));
+		await until(async () => (await hub.agents()).some((agent) => agent.id === id));
 		await new Promise((resolve) => setTimeout(resolve, 300));
-		expect(hub.running.hub.engine.listAgents(false).find((agent) => agent.id === id)?.status.text).toBe("");
+		expect((await hub.agents()).find((agent) => agent.id === id)?.status.text).toBe("");
 	});
 
 	it("probes a matching agent and reports a selector with no match", async () => {

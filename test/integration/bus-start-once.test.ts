@@ -4,17 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { clearReloadState } from "../../src/core/reload-state.ts";
 import { bus } from "../../src/features/bus/index.ts";
-import { startHub } from "../../src/hub/server.ts";
 import { busCapture, until } from "../support/bus.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
-import { startTestHub, type TestHub, tokenSpec, writeHubConfig } from "../support/hub.ts";
+import { startTestHub, type TestHub, writeHubConfig } from "../support/hub.ts";
 
 const capture = busCapture();
 
 describe("bus start and hub reachability", () => {
 	let harness: Harness | undefined;
 	let hub: TestHub | undefined;
-	let restarted: Awaited<ReturnType<typeof startHub>> | undefined;
 	beforeEach(() => {
 		clearReloadState();
 	});
@@ -25,8 +23,6 @@ describe("bus start and hub reachability", () => {
 		harness = undefined;
 		await hub?.close();
 		hub = undefined;
-		await restarted?.close();
-		restarted = undefined;
 		clearReloadState();
 	});
 
@@ -49,7 +45,7 @@ describe("bus start and hub reachability", () => {
 		h.respond([fauxAssistantMessage(fauxText("a")), fauxAssistantMessage(fauxText("b"))]);
 		for (const text of ["one", "two"]) await h.session.prompt(text);
 		expect(failures()).toBe(1);
-		expect(hub.running.hub.engine.listAgents(true)).toEqual([]);
+		expect(await hub.agents(true)).toEqual([]);
 
 		chmodSync(join(h.agentDir, "pimon-hub.token"), 0o600);
 		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
@@ -76,10 +72,8 @@ describe("bus start and hub reachability", () => {
 
 	it("warns once while the hub is down and links when it is back", async () => {
 		hub = await startTestHub();
-		const { url, running } = hub;
-		const port = running.port;
-		await hub.close();
-		hub = undefined;
+		const { url } = hub;
+		await hub.stop();
 		harness = await createHarness({
 			features: [bus, capture.feature],
 			ui: {},
@@ -90,13 +84,7 @@ describe("bus start and hub reachability", () => {
 		await h.session.prompt("/bus");
 		expect(h.notifications.at(-1)?.message.split("\n")[0]).toBe("bus: hub offline");
 
-		restarted = await startHub({
-			listen: `127.0.0.1:${port}`,
-			dataDir: ":memory:",
-			tokens: tokenSpec(),
-			heartbeatMs: 60_000,
-			log: () => {},
-		});
+		await hub.restart();
 		await until(() => capture.get().online, 10_000);
 		expect(h.notifications.filter((entry) => entry.message.includes("unreachable, retrying"))).toHaveLength(1);
 		expect(h.notifications.some((entry) => entry.message.includes("is reachable again"))).toBe(true);
@@ -105,7 +93,7 @@ describe("bus start and hub reachability", () => {
 
 	it("shows a short link drop only in the status, without a warning", async () => {
 		hub = await startTestHub();
-		const { url, running } = hub;
+		const { url } = hub;
 		harness = await createHarness({
 			features: [bus, capture.feature],
 			ui: {},
@@ -113,15 +101,7 @@ describe("bus start and hub reachability", () => {
 		});
 		const h = harness;
 		await until(() => capture.get().online, 10_000);
-		await hub.close();
-		hub = undefined;
-		restarted = await startHub({
-			listen: `127.0.0.1:${running.port}`,
-			dataDir: ":memory:",
-			tokens: tokenSpec(),
-			heartbeatMs: 60_000,
-			log: () => {},
-		});
+		await hub.restart();
 		await until(() => !capture.get().online, 5_000);
 		await until(() => capture.get().online, 10_000);
 		expect(h.notifications.filter((entry) => entry.message.includes("unreachable"))).toEqual([]);

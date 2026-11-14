@@ -13,10 +13,18 @@ import {
 } from "@a2a-js/sdk/client";
 import { HubClient, type SendOutcome } from "../../src/features/bus/hub/client.ts";
 import { HubLink, type Registration } from "../../src/features/bus/hub/link.ts";
-import { EXTERNAL_DEFAULTS, type ExternalAgentConfig } from "../../src/hub/external.ts";
-import type { BusMetadata, LinkEvent, LinkEventType } from "../../src/hub/protocol.ts";
-import { type RunningHub, startHub, type TokenSpec } from "../../src/hub/server.ts";
-import { BUS_URI, HOST_TOKEN, OTHER_HOST_TOKEN, PEER_TOKEN, sleep } from "./hub-process.ts";
+import type { ExternalAgentConfig } from "../../src/hub/external.ts";
+import type { AgentInfo, AgentsResult, BusMetadata, LinkEvent, LinkEventType } from "../../src/hub/protocol.ts";
+import {
+	BUS_URI,
+	HOST_TOKEN,
+	type HubProcess,
+	OTHER_HOST_TOKEN,
+	PEER_TOKEN,
+	sleep,
+	startHubProcess,
+	tempDir,
+} from "./hub-process.ts";
 
 export {
 	BUS_URI,
@@ -128,34 +136,109 @@ export async function startWebhook(): Promise<Webhook> {
 	};
 }
 
+/** A hub process that tests reach only over HTTP, so `HUB_BIN` can swap the hub under test. */
 export interface TestHub {
 	url: string;
-	running: RunningHub;
+	/** What `GET /agents` lists. `offline` also lists agents that went offline lately. */
+	agents(offline?: boolean): Promise<AgentInfo[]>;
+	/** Stops the process. The port and the data stay for `restart`. */
+	stop(): Promise<void>;
+	/** Starts the hub again on the same port with the same data. */
+	restart(): Promise<void>;
+	/** Removes the token of host `mars` from the token file and reloads it with `SIGHUP`. */
+	revokeHostToken(): Promise<void>;
+	/** Stops the process and deletes its data. */
 	close(): Promise<void>;
 }
 
-export function tokenSpec(): TokenSpec {
+/** External agent entry as the hub external file gives it. The hub defaults the fields that it leaves out. */
+export type ExternalAgent = Omit<ExternalAgentConfig, "cardTtlMs">;
+
+function writeTokenFile(file: string, withHost = true): void {
 	const hex = (token: string) => createHash("sha256").update(token).digest("hex");
-	return {
-		mars: { kind: "host", sha256: hex(HOST_TOKEN) },
+	const tokens: Record<string, { kind: "host" | "peer"; sha256: string }> = {
 		venus: { kind: "host", sha256: hex(OTHER_HOST_TOKEN) },
 		hermes: { kind: "peer", sha256: hex(PEER_TOKEN) },
 	};
+	if (withHost) tokens["mars"] = { kind: "host", sha256: hex(HOST_TOKEN) };
+	writeFileSync(file, JSON.stringify(tokens), { mode: 0o600 });
 }
 
-/** An in-process hub on a free loopback port with an in-memory database. */
+/** A hub may drain open streams on SIGTERM. A test does not wait for that. */
+const STOP_WAIT_MS = 2_000;
+
+/** A hub process on a free loopback port with a temp data dir. */
 export async function startTestHub(
-	options: { presenceGraceMs?: number; external?: ExternalAgentConfig[] } = {},
+	options: { presenceGraceMs?: number; external?: ExternalAgent[] } = {},
 ): Promise<TestHub> {
-	const running = await startHub({
-		dataDir: ":memory:",
-		tokens: tokenSpec(),
-		...(options.external ? { external: options.external } : {}),
-		presenceGraceMs: options.presenceGraceMs ?? 300,
-		heartbeatMs: 60_000,
-		log: () => {},
-	});
-	return { url: running.url, running, close: () => running.close() };
+	const tmp = tempDir("pimon-test-hub-");
+	const tokensFile = join(tmp.dir, "tokens.json");
+	writeTokenFile(tokensFile);
+	let externalFile: string | undefined;
+	if (options.external) {
+		externalFile = join(tmp.dir, "external.json");
+		const entries = Object.fromEntries(options.external.map(({ id, ...entry }) => [id, entry]));
+		writeFileSync(externalFile, JSON.stringify(entries), { mode: 0o600 });
+	}
+	const env = {
+		HUB_PRESENCE_GRACE_MS: String(options.presenceGraceMs ?? 300),
+		HUB_HEARTBEAT_MS: "60000",
+	};
+	const launch = (port?: number) =>
+		startHubProcess({
+			dataDir: join(tmp.dir, "data"),
+			tokensFile,
+			env,
+			...(port === undefined ? {} : { port }),
+			...(externalFile ? { externalFile } : {}),
+		});
+	let current: HubProcess | undefined;
+	try {
+		current = await launch();
+	} catch (error) {
+		tmp.dispose();
+		throw error;
+	}
+	const { url, port } = current;
+	let closed = false;
+	const stop = async () => {
+		const running = current;
+		current = undefined;
+		if (!running) return;
+		const exited = await Promise.race([running.stop().then(() => true), sleep(STOP_WAIT_MS).then(() => false)]);
+		if (!exited) await running.stop("SIGKILL");
+	};
+	return {
+		url,
+		async agents(offline = false) {
+			const response = await fetch(`${url}/agents${offline ? "?offline=1" : ""}`, { headers: bearer(HOST_TOKEN) });
+			if (response.status !== 200) throw new Error(`GET /agents: ${response.status} ${await response.text()}`);
+			return ((await response.json()) as AgentsResult).agents;
+		},
+		stop,
+		async restart() {
+			await stop();
+			current = await launch(port);
+		},
+		async revokeHostToken() {
+			writeTokenFile(tokensFile, false);
+			current?.child.kill("SIGHUP");
+			const deadline = Date.now() + 5_000;
+			for (;;) {
+				const response = await fetch(`${url}/agents`, { headers: bearer(HOST_TOKEN) });
+				await response.body?.cancel();
+				if (response.status === 401) return;
+				if (Date.now() > deadline) throw new Error(`hub still accepts the mars token: ${response.status}`);
+				await sleep(20);
+			}
+		},
+		async close() {
+			if (closed) return;
+			closed = true;
+			await stop();
+			tmp.dispose();
+		},
+	};
 }
 
 /** Points the bus feature of `agentDir` at `url`: `pimon.json` plus a 0600 token file. Keeps other config. */
@@ -269,9 +352,8 @@ export async function startPeer(
 }
 
 /** One external agent entry with short timings, as the hub external file gives it. */
-export function externalAgent(id: string, url: string, token: string): ExternalAgentConfig {
+export function externalAgent(id: string, url: string, token: string): ExternalAgent {
 	return {
-		...EXTERNAL_DEFAULTS,
 		id,
 		name: id,
 		url,

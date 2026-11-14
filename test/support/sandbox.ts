@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -80,6 +80,39 @@ export function createSandbox(): Sandbox {
 			PI_CODING_AGENT_DIR: agent,
 			TMPDIR: temp,
 		},
-		dispose: () => rmSync(root, { recursive: true, force: true }),
+		dispose: () => {
+			killSandboxHubs(root);
+			rmSync(root, { recursive: true, force: true });
+		},
 	};
+}
+
+/**
+ * SIGKILLs each process with `--data` under `root` and returns the pids.
+ * An interrupted run can leave hub processes that outlive their test worker.
+ */
+export function killSandboxHubs(root: string, procDir = "/proc"): number[] {
+	const inside = (path: string | undefined) => path !== undefined && (path === root || path.startsWith(`${root}/`));
+	const killed: number[] = [];
+	for (const entry of readdirSync(procDir)) {
+		const pid = Number(entry);
+		if (!Number.isInteger(pid) || pid === process.pid) continue;
+		let args: string[];
+		try {
+			args = readFileSync(join(procDir, entry, "cmdline"), "utf8").split("\0");
+		} catch {
+			continue;
+		}
+		const data = args.findIndex((arg) => arg === "--data" || arg.startsWith("--data="));
+		if (data < 0) continue;
+		const value = args[data] === "--data" ? args[data + 1] : args[data]?.slice("--data=".length);
+		if (!inside(value)) continue;
+		try {
+			process.kill(pid, "SIGKILL");
+			killed.push(pid);
+		} catch {
+			// Already gone.
+		}
+	}
+	return killed;
 }

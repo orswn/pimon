@@ -2,13 +2,11 @@ import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import * as hubProtocol from "../../../hub/protocol.ts";
 import type { LinkEvent } from "../../../hub/protocol.ts";
 import { Backoff, backoffDelay } from "./backoff.ts";
 import {
 	BUS_EXTENSION_URI,
 	type FetchFn,
-	HUB_PROTOCOL,
 	HubClient,
 	HubHttpError,
 	HubUnreachableError,
@@ -73,13 +71,6 @@ async function until(check: () => boolean, ms = 2000): Promise<void> {
 		await new Promise((done) => setTimeout(done, 5));
 	}
 }
-
-describe("hub wire constants", () => {
-	it("match the hub protocol module", () => {
-		expect(HUB_PROTOCOL).toBe(hubProtocol.HUB_PROTOCOL);
-		expect(BUS_EXTENSION_URI).toBe(hubProtocol.BUS_EXTENSION_URI);
-	});
-});
 
 describe("SseParser", () => {
 	it("joins split chunks, skips comments, and keeps ids", () => {

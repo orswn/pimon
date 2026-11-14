@@ -28,9 +28,9 @@ export function busCapture() {
 	};
 }
 
-export async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
+export async function until(check: () => boolean | Promise<boolean>, timeoutMs = 5_000): Promise<void> {
 	const deadline = Date.now() + timeoutMs;
-	while (!check()) {
+	while (!(await check())) {
 		if (Date.now() > deadline) throw new Error("condition not met in time");
 		await new Promise((resolve) => setTimeout(resolve, 20));
 	}

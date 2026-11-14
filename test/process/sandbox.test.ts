@@ -1,11 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
 	ISOLATED_ENV_KEYS,
 	ISOLATED_ENV_PREFIXES,
 	KEPT_ENV_KEYS,
+	killSandboxHubs,
 	scrubEnv,
 	STUBBED_COMMANDS,
 } from "../support/sandbox.ts";
@@ -23,6 +25,30 @@ describe("test sandbox", () => {
 		expect(homedir().startsWith(sandbox)).toBe(true);
 		expect(process.env["XDG_RUNTIME_DIR"]?.startsWith(sandbox)).toBe(true);
 		expect(process.env["PI_CODING_AGENT_DIR"]?.startsWith(sandbox)).toBe(true);
+	});
+
+	it("kills hub processes whose data dir is under the sandbox root, and no other", async () => {
+		const root = mkdtempSync(join(tmpdir(), "root-"));
+		const start = (data: string) => {
+			const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", "--data", data], {
+				stdio: "ignore",
+			});
+			const exited = new Promise<NodeJS.Signals | null>((done) => child.once("exit", (_code, signal) => done(signal)));
+			return { child, exited };
+		};
+		const inside = start(join(root, "tmp", "pimon-test-hub-x", "data"));
+		const sibling = start(`${root}-other/data`);
+		try {
+			await new Promise((done) => setTimeout(done, 200));
+			expect(killSandboxHubs(root)).toEqual([inside.child.pid]);
+			expect(await inside.exited).toBe("SIGKILL");
+			expect(sibling.child.exitCode).toBeNull();
+			expect(sibling.child.signalCode).toBeNull();
+		} finally {
+			inside.child.kill("SIGKILL");
+			sibling.child.kill("SIGKILL");
+			await sibling.exited;
+		}
 	});
 
 	it("points the temp dir into the sandbox with mode 700", () => {

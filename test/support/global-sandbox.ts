@@ -5,5 +5,11 @@ export default function setup(): () => void {
 	const sandbox = createSandbox();
 	scrubEnv(process.env);
 	Object.assign(process.env, sandbox.env);
-	return () => sandbox.dispose();
+	// An interrupted run exits without calling the teardown. Its hub processes would outlive it.
+	const onExit = () => sandbox.dispose();
+	process.once("exit", onExit);
+	return () => {
+		process.off("exit", onExit);
+		sandbox.dispose();
+	};
 }
