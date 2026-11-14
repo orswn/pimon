@@ -22,3 +22,66 @@ jobs:
       - run: npm ci
       - run: npm run verify
       - run: node scripts/check-prod-install.ts
+
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HUB_URL: http://127.0.0.1:18080
+      TCK_COMMIT: 70f6f73c30208e80c889141907e094899e6e9f05
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - name: Start the hub
+        run: |
+          node src/hub/main.ts --test-agents --listen 127.0.0.1:18080 --data "$RUNNER_TEMP/hub" > "$RUNNER_TEMP/hub.log" 2>&1 &
+          for _ in $(seq 1 50); do curl -sf "$HUB_URL/healthz" && exit 0; sleep 0.2; done
+          cat "$RUNNER_TEMP/hub.log"
+          exit 1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+      - name: Run a2a-tck
+        run: |
+          git init -q "$RUNNER_TEMP/tck"
+          cd "$RUNNER_TEMP/tck"
+          git remote add origin https://github.com/a2aproject/a2a-tck.git
+          git fetch -q --depth 1 origin "$TCK_COMMIT"
+          git checkout -q FETCH_HEAD
+          uv sync --frozen
+          # The gate below decides: SHOULD and MAY gaps do not fail the job.
+          uv run python run_tck.py --sut-host "$HUB_URL/a2a/tck" --transport jsonrpc || true
+      - run: python3 scripts/tck-gate.py "$RUNNER_TEMP/tck/reports"
+      - run: uv run scripts/hub-python-client.py "$HUB_URL"
+      - if: failure()
+        run: cat "$RUNNER_TEMP/hub.log"
+
+  image:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, conformance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build and push ghcr.io/orswn/pimon-hub
+        env:
+          IMAGE: ghcr.io/orswn/pimon-hub
+          TAG: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker build -f Containerfile -t "$IMAGE:$TAG" .
+          docker push "$IMAGE:$TAG"
+          # A pre-release tag such as v1.7.0-rc.1 does not move :latest.
+          if [[ "$TAG" != *-* ]]; then
+            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+          fi

@@ -1,0 +1,5 @@
+*
+!package.json
+!package-lock.json
+!src/hub/
+src/hub/**/*.test.ts
