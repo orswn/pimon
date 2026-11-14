@@ -4,6 +4,8 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-14
+
 ### Added
 
 - The hub sends tasks to external A2A agents, such as Hermes, from an `--external` file. It streams each message, maps the answer back to the hub task, queues one message per context, retries rate limits and offline agents, and recovers open tasks after a restart.
