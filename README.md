@@ -182,6 +182,41 @@ All features are on by default. The list is in load order.
 - Esc: in insert mode, Esc goes to normal mode. In normal mode, Esc goes to pi, so it stops a run, and a double Esc runs pi's double-Escape action (`/tree` by default). Esc keys pressed in quick succession after leaving insert mode or a pending command reach pi only once.
 - External commands: only with `clipboard: "yank"`. Through pi, one of `wl-copy`, `xclip`, `xsel`, `pbcopy`, or `termux-clipboard-set`. pi also writes OSC 52.
 
+## Hub
+
+`src/hub/` is `pimon-hub`, a message hub for pi sessions on several hosts. It is an A2A 1.0 server (JSON-RPC binding) with its own task store in SQLite. The pi extension does not load it.
+
+Run it with Node 24:
+
+```bash
+node src/hub/main.ts --listen 127.0.0.1:8080 --data ./hub-data --tokens ./tokens.json
+```
+
+| Flag            | Env                 | Default          | Meaning                                                                                  |
+| --------------- | ------------------- | ---------------- | ---------------------------------------------------------------------------------------- |
+| `--listen`      | `HUB_LISTEN`        | `0.0.0.0:8080`   | Bind address. Port `0` picks a free port. The hub prints `listening <port>` when ready.  |
+| `--data`        | `HUB_DATA`          | `/data`          | SQLite directory. `:memory:` keeps nothing.                                              |
+| `--tokens`      | `HUB_TOKENS_FILE`   | none             | Token file. Without it, every authenticated route answers 401.                           |
+| `--public-url`  | `HUB_PUBLIC_URL`    | from the request | Base URL on agent cards.                                                                 |
+| `--push-allow`  | `HUB_PUSH_ALLOW`    | none             | Host names, addresses, and CIDRs that push webhooks may reach although they are private. |
+| `--test-agents` | `HUB_TEST_AGENTS=1` | off              | Built-in `tck` and `echo` agents without a token, for conformance tests.                 |
+
+The token file maps a principal name to a kind and the sha256 of its bearer token. `SIGHUP` reloads it.
+
+```json
+{ "mars": { "kind": "host", "sha256": "<hex>" }, "hermes": { "kind": "peer", "sha256": "<hex>" } }
+```
+
+- A `host` token acts for the pi sessions of that host. The first registration binds a session id to its host.
+- A `peer` token may use only the A2A routes.
+- Routes:
+  - `GET /healthz`: no token.
+  - `GET /a2a/<agent>/.well-known/agent-card.json` and `POST /a2a/<agent>`: one A2A agent per pi session. `<agent>` is a session id or `@<name>`.
+  - `/link/...`: the pimon session link: registration, an event stream with replay by `Last-Event-ID` and acks, task updates, status, inbox. Host tokens only.
+  - `GET /agents`: the registry. Host tokens only.
+- Push webhooks to loopback, private, link-local, and CGNAT addresses are refused unless `--push-allow` lists them.
+- CI runs the A2A TCK against the `tck` agent and the official Python SDK client against `echo`. A `v*` tag publishes the image `ghcr.io/orswn/pimon-hub` from `Containerfile`.
+
 ## Environment
 
 Names that pimon reads:
@@ -245,6 +280,9 @@ From 1.0.0, SemVer covers these surfaces:
 - Environment names that pimon reads or sets, except `PI_BUS_DEBUG`. Names that other programs own are not covered.
 - Role file frontmatter.
 - The bus wire protocol, `BUS_PROTOCOL = 1`.
+
+The hub HTTP API and `HUB_PROTOCOL` are not covered before 2.0.0.
+
 - The versioned records: presence, lease, spawn file, agent record, usage cache, and history lines. Log files are not covered.
 
 Prompt text and tool descriptions can change in a minor version.

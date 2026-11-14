@@ -4,6 +4,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+### Added
+
+- `pimon-hub` in `src/hub/`: an A2A 1.0 message hub for pi sessions on several hosts, with its own SQLite task store, per-host and per-peer bearer tokens, a session link with replay, and a registry. CI checks it with the A2A TCK and the official Python SDK, and a tag publishes the `ghcr.io/orswn/pimon-hub` image. The pi extension does not load it yet.
+
 ## [1.6.1] - 2026-11-09
 
 ### Fixed
