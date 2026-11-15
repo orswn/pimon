@@ -361,7 +361,7 @@ describe("hub link contract", () => {
 		expect(await ok("POST", `/link/${alpha}/read`, { ids: [messageId] })).toEqual({ read: 1 });
 		const received = await ok("GET", `/link/${beta}/inbox`);
 		expect(received["messages"]).toEqual([expect.objectContaining({ data: { n: 1 }, taskState: "working" })]);
-		expect(await ok("GET", `/link/${alpha}/message/${messageId.slice(0, 12)}`)).toMatchObject({ text: "on it" });
+		expect(await ok("GET", `/link/${alpha}/message/${messageId.slice(0, -1)}`)).toMatchObject({ text: "on it" });
 		const thread = await ok("GET", `/link/${alpha}/thread/ctx-review`);
 		expect((thread["messages"] as { text: string }[]).map((item) => item.text)).toEqual(["please review", "on it"]);
 
