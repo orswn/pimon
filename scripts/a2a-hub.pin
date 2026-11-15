@@ -2,7 +2,6 @@
 # A2A_HUB_REF: a release tag of github.com/orswn/a2a-hub, or a commit.
 # A2A_HUB_DIGEST: the digest of ghcr.io/orswn/a2a-hub:<A2A_HUB_REF>, as sha256:<hex>. Only a release has one.
 # A2A_HUB_GO: the Go version that builds the hub from source.
-# FIXME(okka): pin the a2a-hub v1.1.0 tag and its image digest when that release exists.
-A2A_HUB_REF=a68c16e733f24b00d0a6b1beecd6b9ecc813f0e6
-A2A_HUB_DIGEST=
+A2A_HUB_REF=v1.1.0
+A2A_HUB_DIGEST=sha256:f4f7ac2db321d74476e41f50477848654c8eff1a582c5dee8b41dd5b2a1708ae
 A2A_HUB_GO=1.26.11
