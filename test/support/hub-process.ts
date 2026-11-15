@@ -4,12 +4,14 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { AGENT_HEADER, BUS_EXTENSION_URI, HARNESS, HUB_PROTOCOL } from "../../src/features/bus/hub/client.ts";
 
-/** The protocol of the hub under test. A unit test pins it to `HUB_PROTOCOL`. */
-export const PROTOCOL = 2;
+/** The protocol that this pimon speaks. */
+export const PROTOCOL = HUB_PROTOCOL;
 /** Where `scripts/fetch-hub.sh` puts the pinned hub. */
 export const FETCHED_HUB = resolve(import.meta.dirname, "../../.hub/a2a-hub");
-export const BUS_URI = "https://github.com/orswn/pimon/a2a/bus/v1";
+export const BUS_URI = BUS_EXTENSION_URI;
+export { AGENT_HEADER, HARNESS };
 export const HOST_TOKEN = "mars-token";
 export const OTHER_HOST_TOKEN = "venus-token";
 export const PEER_TOKEN = "hermes-token";
@@ -147,7 +149,12 @@ export class LinkClient {
 	}
 
 	register(extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-		return this.ok("POST", "/link/register", { agent: this.agent, protocol: 2, ...extra });
+		return this.ok("POST", "/link/register", {
+			agent: this.agent,
+			protocol: PROTOCOL,
+			labels: { harness: HARNESS },
+			...extra,
+		});
 	}
 
 	async connect(options: { lastEventId?: string; query?: string } = {}): Promise<void> {

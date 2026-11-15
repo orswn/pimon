@@ -1,4 +1,4 @@
-import type { PendingResult } from "../../hub/protocol.ts";
+import type { PendingResult } from "@orswn/a2a-hub-protocol";
 import { type BusMessage, senderText, shortId, withoutAskedTasks } from "./protocol.ts";
 
 // Bound digests before injection. Compaction owns history reduction after delivery.

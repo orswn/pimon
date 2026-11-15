@@ -1,5 +1,7 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { chmodSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
 import { clearReloadState } from "../../src/core/reload-state.ts";
@@ -51,6 +53,40 @@ describe("bus start and hub reachability", () => {
 		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
 		await until(() => capture.get().online);
 		expect(failures()).toBe(1);
+	});
+
+	it("stops with an upgrade text and no retry when the hub speaks protocol 2", async () => {
+		const requests: { method: string; url: string; body: string }[] = [];
+		const old = createServer((req, res) => {
+			let body = "";
+			req.on("data", (chunk: Buffer) => {
+				body += chunk.toString();
+			});
+			req.on("end", () => {
+				requests.push({ method: req.method ?? "", url: req.url ?? "", body });
+				res.writeHead(426, { "Content-Type": "application/json" });
+				res.end(JSON.stringify({ error: "hub protocol 2 required", expected: 2 }));
+			});
+		});
+		await new Promise<void>((done) => old.listen(0, "127.0.0.1", done));
+		try {
+			const url = `http://127.0.0.1:${(old.address() as AddressInfo).port}`;
+			harness = await createHarness({
+				features: [bus, capture.feature],
+				setupAgentDir: (agentDir) => writeHubConfig(agentDir, url),
+			});
+			await until(() => capture.get().unavailable()?.includes("426") === true);
+			expect(capture.get().unavailable()).toBe(
+				"pi_bus: 426 hub protocol 2 required. This pimon speaks hub protocol 3. Update pimon or the hub.",
+			);
+			expect(JSON.parse(requests[0]?.body ?? "{}")).toMatchObject({ protocol: 3, labels: { harness: "pi" } });
+		} finally {
+			await harness?.shutdown();
+			harness?.dispose();
+			harness = undefined;
+			old.closeAllConnections();
+			await new Promise<void>((done) => old.close(() => done()));
+		}
 	});
 
 	it("starts the bus at the first prompt when a reload sends no session start", async () => {

@@ -1,4 +1,4 @@
-import type { PendingResult, PresenceEvent } from "../../hub/protocol.ts";
+import type { PendingResult, PresenceEvent } from "@orswn/a2a-hub-protocol";
 import { ago } from "./digest.ts";
 import type { WakePolicy } from "./identity.ts";
 import { shortId, withoutAskedTasks } from "./protocol.ts";

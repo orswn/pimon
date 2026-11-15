@@ -2,9 +2,6 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { renderHubSchema, SCHEMA_FILE } from "../../scripts/hub-schema.ts";
-import { PROTOCOL } from "../../test/support/hub-process.ts";
-import { BUS_EXTENSION_URI as CLIENT_BUS_URI, HUB_PROTOCOL as CLIENT_PROTOCOL } from "../features/bus/hub/client.ts";
-import { BUS_EXTENSION_URI, HUB_PROTOCOL } from "./protocol.ts";
 import * as S from "./protocol.schema.ts";
 
 const repo = join(import.meta.dirname, "../..");
@@ -23,25 +20,6 @@ describe("hub protocol schema", () => {
 		const refs = [...JSON.stringify(document).matchAll(/"\$ref":"#\/\$defs\/([^"]+)"/g)].map((match) => match[1]);
 		expect(refs.length).toBeGreaterThan(0);
 		for (const name of refs) expect(Object.keys(document.$defs)).toContain(name);
-	});
-
-	it("gives the contract suite the protocol of this hub", () => {
-		expect(PROTOCOL).toBe(HUB_PROTOCOL);
-	});
-
-	it("gives the bus client the wire constants of this hub", () => {
-		expect(CLIENT_PROTOCOL).toBe(HUB_PROTOCOL);
-		expect(CLIENT_BUS_URI).toBe(BUS_EXTENSION_URI);
-	});
-
-	it("keeps the hub process helper free of value imports from src", () => {
-		for (const file of ["test/support/hub-process.ts"]) {
-			const text = readFileSync(join(repo, file), "utf8");
-			const imports = [...text.matchAll(/^import\s+(type\s+)?[^;]*?from\s+"([^"]+)"/gm)];
-			expect(imports.length, file).toBeGreaterThan(0);
-			const values = imports.filter((match) => !match[1] && /\/src\//.test(match[2] ?? "")).map((match) => match[2]);
-			expect(values, file).toEqual([]);
-		}
 	});
 
 	it("finds static, dynamic, and require imports of src/hub", () => {

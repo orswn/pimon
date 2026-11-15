@@ -26,7 +26,7 @@ function agent(name: string, extra: Partial<AgentInfo> = {}): AgentInfo {
 	return {
 		id: idOf(name),
 		name,
-		kind: "pi",
+		kind: "session",
 		host: "mars",
 		cwd: "/w",
 		role: null,

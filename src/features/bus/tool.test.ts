@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { InboxItem, PendingResult, TaskUpdateBody } from "../../hub/protocol.ts";
+import type { InboxItem, PendingResult, TaskUpdateBody } from "@orswn/a2a-hub-protocol";
 import type { HubClient, OutgoingMessage, SendOutcome } from "./hub/client.ts";
 import { HubHttpError } from "./hub/client.ts";
 import type { AgentInfo } from "./protocol.ts";
@@ -22,7 +22,7 @@ function agent(name: string, hex: string, extra: Partial<AgentInfo> = {}): Agent
 	return {
 		id: hex.repeat(32),
 		name,
-		kind: "pi",
+		kind: "session",
 		host: "mars",
 		cwd: "/",
 		role: null,
@@ -44,7 +44,7 @@ function item(extra: Partial<InboxItem> = {}): InboxItem {
 		taskId: null,
 		contextId: "f".repeat(32),
 		direction: "in",
-		from: { agent: ASKER, name: "asker", kind: "pi" },
+		from: { agent: ASKER, name: "asker", kind: "session" },
 		to: { agent: SELF, name: "me" },
 		kind: "question",
 		wake: "now",
@@ -140,6 +140,23 @@ const mixedOutcome = (to: string): SendOutcome =>
 				: { state: "queued", contextId: "c" };
 
 describe("peers and probe", () => {
+	it("hide the session kind and the pi harness, and show other kinds and harnesses", async () => {
+		const { host: h } = host({
+			agents: [
+				agent("pi-one", "1", { labels: { harness: "pi" } }),
+				agent("claude", "2", { labels: { harness: "claude-code" } }),
+				agent("hermes", "3", { kind: "external", labels: {} }),
+				agent("echo", "4", { kind: "builtin" }),
+			],
+		});
+		expect((await peersAction(h)).text.split("\n")).toEqual([
+			`pi-one id:${"1".repeat(12)} idle host=mars cwd=/`,
+			`claude id:${"2".repeat(12)} harness=claude-code idle host=mars cwd=/`,
+			`hermes id:${"3".repeat(12)} kind=external idle host=mars cwd=/`,
+			`echo id:${"4".repeat(12)} kind=builtin idle host=mars cwd=/`,
+		]);
+	});
+
 	it("show the whole stored status text", async () => {
 		const text = `${"s".repeat(150)} long tail`;
 		const { host: h } = host({ agents: [agent("alpha", "1", { status: { text, at: null } })] });
@@ -284,7 +301,9 @@ describe("reply", () => {
 	});
 
 	it("refuses a target and an own message", async () => {
-		const { host: h } = host({ messages: [item({ direction: "out", from: { agent: SELF, name: "me", kind: "pi" } })] });
+		const { host: h } = host({
+			messages: [item({ direction: "out", from: { agent: SELF, name: "me", kind: "session" } })],
+		});
 		await expect(replyAction(h, { action: "reply", target: "all", body: "x", messageId: "e" })).rejects.toThrow(
 			/reply derives the recipient/,
 		);

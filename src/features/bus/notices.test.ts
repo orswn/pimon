@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { PendingResult, PresenceEvent } from "../../hub/protocol.ts";
+import type { PendingResult, PresenceEvent } from "@orswn/a2a-hub-protocol";
 import { MAX_STATE_CHARS, MAX_STATE_ITEMS, renderOpenState } from "./digest.ts";
 import { ExpectedExits, offlineNotice, offlineWakes, type OfflineContext, openWorkWith } from "./notices.ts";
 

@@ -383,9 +383,7 @@ describe("bus feature on a hub", () => {
 		const [listed] = await busTool(h, [{ action: "peers" }]);
 		expect(listed?.split("\n")).toHaveLength(1);
 		expect(listed).toMatch(
-			new RegExp(
-				`^alpha id:${hex(alpha.id)} kind=session idle role=reviewer host=mars status="reviewing step 3" \\(\\d+s\\)`,
-			),
+			new RegExp(`^alpha id:${hex(alpha.id)} idle role=reviewer host=mars status="reviewing step 3" \\(\\d+s\\)`),
 		);
 	});
 

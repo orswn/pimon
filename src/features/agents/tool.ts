@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { StringEnum, uuidv7 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { PresenceEvent } from "../../hub/protocol.ts";
+import type { PresenceEvent } from "@orswn/a2a-hub-protocol";
 import { HubHttpError, NO_ANSWER } from "../bus/hub/client.ts";
 import { defaultName } from "../bus/identity.ts";
 import type { AgentInfo, BusService } from "../bus/index.ts";
@@ -714,7 +714,7 @@ function childStub(id: string, name: string): AgentInfo {
 	return {
 		id,
 		name,
-		kind: "pi",
+		kind: "session",
 		host: null,
 		cwd: null,
 		role: null,

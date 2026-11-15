@@ -12,11 +12,11 @@ import type {
 	PresenceEvent,
 	RegisterResult,
 	UpdateEvent,
-} from "../../hub/protocol.ts";
+} from "@orswn/a2a-hub-protocol";
 import { registerCommands } from "./commands.ts";
 import { scheduleForcedClose } from "./control.ts";
 import { type QueuedDigest, renderDigest, renderOpenState, truncate } from "./digest.ts";
-import { HubClient, HubHttpError } from "./hub/client.ts";
+import { HUB_PROTOCOL, HubClient, HubHttpError } from "./hub/client.ts";
 import { HubLink, type LinkStatus, type Registration } from "./hub/link.ts";
 import { readHubToken } from "./hub/token.ts";
 import {
@@ -360,7 +360,7 @@ class BusRuntime implements ActionHost {
 	private fatalText(status: LinkStatus): string {
 		if (status.fatal === 401) return `pi_bus: the hub rejected the token in ${this.tokenFile()}.`;
 		if (status.fatal === 426)
-			return `pi_bus: ${status.reason ?? "protocol mismatch"}. This pimon speaks hub protocol 2. Update pimon or the hub.`;
+			return `pi_bus: ${status.reason ?? "protocol mismatch"}. This pimon speaks hub protocol ${HUB_PROTOCOL}. Update pimon or the hub.`;
 		if (status.fatal === 403)
 			return `pi_bus: the hub refused this host (403): session ${shortId(this.session?.id ?? "")} belongs to another host.`;
 		return `pi_bus: the hub refused the link: ${status.reason ?? status.fatal}`;

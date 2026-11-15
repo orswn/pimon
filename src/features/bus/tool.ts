@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import type { BusMetadata, InboxItem, PendingResult, TaskUpdateBody } from "../../hub/protocol.ts";
+import type { BusMetadata, InboxItem, PendingResult, TaskUpdateBody } from "@orswn/a2a-hub-protocol";
 import { ago, truncate } from "./digest.ts";
-import { HubHttpError, HubUnreachableError, type HubClient, type SendOutcome } from "./hub/client.ts";
+import {
+	HARNESS,
+	HUB_PROTOCOL,
+	HubHttpError,
+	HubUnreachableError,
+	type HubClient,
+	type SendOutcome,
+} from "./hub/client.ts";
 import { formatLabels, type WakePolicy } from "./identity.ts";
 import {
 	type AgentInfo,
@@ -195,7 +202,7 @@ export function hubErrorText(error: unknown, url: string | undefined): string {
 		if (error.status === 426) {
 			const expected = error.body["expected"];
 			const version = typeof expected === "number" ? String(expected) : "?";
-			return `pi_bus: the hub speaks protocol ${version}, this pimon speaks 2. Update pimon or the hub.`;
+			return `pi_bus: the hub speaks protocol ${version}, this pimon speaks ${HUB_PROTOCOL}. Update pimon or the hub.`;
 		}
 		return `pi_bus: the hub refused the request: ${error.message}`;
 	}
@@ -218,10 +225,12 @@ function statusOf(agent: AgentInfo): string | undefined {
 }
 
 function describeAgent(agent: AgentInfo): string {
+	const harness = agent.labels["harness"];
 	return [
 		agent.name,
 		`id:${shortId(agent.id)}`,
-		agent.kind === "pi" ? undefined : `kind=${agent.kind}`,
+		agent.kind === "session" ? undefined : `kind=${agent.kind}`,
+		harness && harness !== HARNESS ? `harness=${harness}` : undefined,
 		agent.online ? agent.state : "offline",
 		agent.role ? `role=${agent.role}` : undefined,
 		agent.host ? `host=${agent.host}` : undefined,
@@ -574,7 +583,7 @@ function agentStub(id: string, name: string): AgentInfo {
 	return {
 		id,
 		name,
-		kind: "pi",
+		kind: "session",
 		host: null,
 		cwd: null,
 		role: null,

@@ -1,7 +1,7 @@
 // No pi imports: these helpers run under plain `node` in process tests.
-import type { BusKind, LinkTaskState, PendingResult, Priority, Wake } from "../../hub/protocol.ts";
+import type { BusKind, LinkTaskState, PendingResult, Priority, Wake } from "@orswn/a2a-hub-protocol";
 
-export type { AgentInfo, BusKind, Priority, Wake } from "../../hub/protocol.ts";
+export type { AgentInfo, BusKind, Priority, Wake } from "@orswn/a2a-hub-protocol";
 
 /** One bus message as the digest, inbox, and read views show it. */
 export interface BusMessage {

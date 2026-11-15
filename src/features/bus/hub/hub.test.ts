@@ -1,12 +1,15 @@
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { LinkEvent } from "../../../hub/protocol.ts";
+import type { LinkEvent } from "@orswn/a2a-hub-protocol";
 import { Backoff, backoffDelay } from "./backoff.ts";
+import { hubErrorText } from "../tool.ts";
 import {
 	BUS_EXTENSION_URI,
 	type FetchFn,
+	HUB_PROTOCOL,
 	HubClient,
 	HubHttpError,
 	HubUnreachableError,
@@ -137,19 +140,39 @@ describe("readHubToken", () => {
 	});
 });
 
+describe("hub protocol pin", () => {
+	it("matches the committed JSON Schema of the a2a-hub protocol package", () => {
+		const file = createRequire(import.meta.url).resolve(`@orswn/a2a-hub-protocol/hub-protocol-v${HUB_PROTOCOL}.json`);
+		const document = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+		expect(HUB_PROTOCOL).toBe(3);
+		expect(document["$id"]).toBe("urn:a2a-hub:protocol:3");
+		expect(document["x-bus-extension-uri"]).toBe(BUS_EXTENSION_URI);
+	});
+});
+
 describe("HubClient", () => {
-	it("sends the bearer token and the protocol on register", async () => {
+	it("sends the bearer token, the protocol, and the pi harness label on register", async () => {
 		const fake = fakeFetch(() => json(200, { agent: AGENT, name: "n", host: "mars" }));
 		const client = new HubClient({ url: "http://hub/", token: "tok", agent: AGENT, fetch: fake.fetch });
 		await client.register({ name: "n", ephemeral: true });
+		await client.register({ name: "n", labels: { team: "core", harness: "other" } });
 		expect(fake.calls[0]?.url).toBe("http://hub/link/register");
 		expect(new Headers(fake.calls[0]?.init.headers).get("authorization")).toBe("Bearer tok");
 		expect(JSON.parse(bodyText(fake.calls[0]?.init))).toEqual({
 			name: "n",
 			ephemeral: true,
+			labels: { harness: "pi" },
 			agent: AGENT,
-			protocol: 2,
+			protocol: 3,
 		});
+		expect(JSON.parse(bodyText(fake.calls[1]?.init))).toMatchObject({ labels: { team: "core", harness: "pi" } });
+	});
+
+	it("tells the model the protocol of the hub and of this pimon after a 426", () => {
+		const error = new HubHttpError(426, "426 hub protocol 2 required", { expected: 2 });
+		expect(hubErrorText(error, "http://hub")).toBe(
+			"pi_bus: the hub speaks protocol 2, this pimon speaks 3. Update pimon or the hub.",
+		);
 	});
 
 	it("turns an error status into HubHttpError and a network error into HubUnreachableError", async () => {
@@ -218,7 +241,9 @@ describe("HubClient", () => {
 		const call = fake.calls[0];
 		expect(call?.url).toBe("http://hub/a2a/peer-1");
 		const headers = new Headers(call?.init.headers);
-		expect(headers.get("x-pimon-agent")).toBe(AGENT);
+		expect(headers.get("x-a2a-agent")).toBe(AGENT);
+		expect(headers.get("x-pimon-agent")).toBeNull();
+		expect(headers.get("a2a-extensions")).toBe("https://github.com/orswn/a2a-hub/bus/v1");
 		expect(headers.get("authorization")).toBe("Bearer t");
 		expect(headers.get("a2a-version")).toBe("1.0");
 		const body = JSON.parse(bodyText(call?.init)) as {

@@ -1,6 +1,6 @@
-import type { LinkEvent, LinkEventType, RegisterBody, RegisterResult } from "../../../hub/protocol.ts";
+import type { LinkEvent, LinkEventType, RegisterResult } from "@orswn/a2a-hub-protocol";
 import { Backoff } from "./backoff.ts";
-import { type HubClient, HubHttpError } from "./client.ts";
+import { type HubClient, HubHttpError, type Registration } from "./client.ts";
 import { SseParser } from "./sse.ts";
 
 export type LinkState = "connecting" | "online" | "retrying" | "stopped";
@@ -14,7 +14,7 @@ export interface LinkStatus {
 	failures: number;
 }
 
-export type Registration = Omit<RegisterBody, "agent" | "protocol">;
+export type { Registration };
 
 export interface HubLinkOptions {
 	client: HubClient;

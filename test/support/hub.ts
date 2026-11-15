@@ -14,8 +14,9 @@ import {
 import { HubClient, type SendOutcome } from "../../src/features/bus/hub/client.ts";
 import { HubLink, type Registration } from "../../src/features/bus/hub/link.ts";
 import type { ExternalAgentConfig } from "../../src/hub/external.ts";
-import type { AgentInfo, AgentsResult, BusMetadata, LinkEvent, LinkEventType } from "../../src/hub/protocol.ts";
+import type { AgentInfo, AgentsResult, BusMetadata, LinkEvent, LinkEventType } from "@orswn/a2a-hub-protocol";
 import {
+	AGENT_HEADER,
 	BUS_URI,
 	HOST_TOKEN,
 	type HubProcess,
@@ -27,7 +28,9 @@ import {
 } from "./hub-process.ts";
 
 export {
+	AGENT_HEADER,
 	BUS_URI,
+	HARNESS,
 	HOST_TOKEN,
 	type HubProcess,
 	LinkClient,
@@ -63,7 +66,7 @@ export async function a2aClient(hubUrl: string, agent: string, headers: Record<s
 
 export function bearer(token: string, agent?: string): Record<string, string> {
 	const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
-	if (agent) headers["X-Pimon-Agent"] = agent;
+	if (agent) headers[AGENT_HEADER] = agent;
 	return headers;
 }
 

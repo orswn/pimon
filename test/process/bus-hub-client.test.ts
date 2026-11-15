@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HubClient } from "../../src/features/bus/hub/client.ts";
 import { HubLink } from "../../src/features/bus/hub/link.ts";
-import type { LinkEvent } from "../../src/hub/protocol.ts";
+import type { LinkEvent } from "@orswn/a2a-hub-protocol";
 import type { LinkStatus } from "../../src/features/bus/hub/link.ts";
 import { HOST_TOKEN, startHubProcess, startTestHub, tempDir, type TestHub, writeTokens } from "../support/hub.ts";
 

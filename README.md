@@ -320,6 +320,6 @@ From 1.0.0, SemVer covers these surfaces:
 - Role file frontmatter.
 - The versioned records: lease, spawn file, child pid file, agent record, and usage cache. Log files are not covered.
 
-The hub HTTP API is versioned by `HUB_PROTOCOL`, not by the pimon version. A pimon client works with a hub of the same `HUB_PROTOCOL`.
+The hub link API is versioned by its protocol number, not by the pimon version. This pimon speaks hub protocol 3, so it needs a2a-hub 1.1.0 or later. A hub that speaks only protocol 2 refuses it with 426, and the bus stops with a text that says to update pimon or the hub.
 
 Prompt text and tool descriptions can change in a minor version.

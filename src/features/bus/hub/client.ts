@@ -12,12 +12,18 @@ import type {
 	TaskUpdateBody,
 	ThreadResult,
 	TopicsBody,
-} from "../../../hub/protocol.ts";
+} from "@orswn/a2a-hub-protocol";
 import { dashedPrefix } from "../protocol.ts";
 
-/** Same values as `src/hub/protocol.ts`. A test pins them, so the extension never loads hub code. */
-export const HUB_PROTOCOL = 2;
-export const BUS_EXTENSION_URI = "https://github.com/orswn/pimon/a2a/bus/v1";
+/**
+ * Same values as the a2a-hub protocol package. A test pins them to its JSON Schema file, because pi installs
+ * pimon without dev dependencies.
+ */
+export const HUB_PROTOCOL = 3;
+export const BUS_EXTENSION_URI = "https://github.com/orswn/a2a-hub/bus/v1";
+export const AGENT_HEADER = "X-A2A-Agent";
+/** The `harness` label that each registration of this client carries. */
+export const HARNESS = "pi";
 
 export const REQUEST_TIMEOUT_MS = 10_000;
 /**
@@ -77,6 +83,11 @@ export interface UpdatedTask {
 	contextId: string;
 	status?: { message?: { messageId?: string } };
 }
+
+/** A registration as the bus builds it. The client adds the agent, the protocol, and the `harness` label. */
+export type Registration = Omit<RegisterBody, "agent" | "protocol" | "labels"> & {
+	labels?: Record<string, string> | undefined;
+};
 
 export interface HubClientOptions {
 	url: string;
@@ -200,8 +211,14 @@ export class HubClient {
 		return this.call("GET", "/healthz");
 	}
 
-	register(body: Omit<RegisterBody, "agent" | "protocol">): Promise<RegisterResult> {
-		return this.call("POST", "/link/register", { ...body, agent: this.agent, protocol: HUB_PROTOCOL });
+	register(registration: Registration): Promise<RegisterResult> {
+		const body: RegisterBody = {
+			...registration,
+			labels: { ...registration.labels, harness: HARNESS },
+			agent: this.agent,
+			protocol: HUB_PROTOCOL,
+		};
+		return this.call("POST", "/link/register", body);
 	}
 
 	offline(): Promise<unknown> {
@@ -324,7 +341,7 @@ export class HubClient {
 		const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
 			const headers = new Headers(init?.headers);
 			headers.set("Authorization", `Bearer ${this.token}`);
-			headers.set("X-Pimon-Agent", this.agent);
+			headers.set(AGENT_HEADER, this.agent);
 			sent = true;
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 			try {

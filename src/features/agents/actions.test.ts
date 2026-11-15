@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-import type { PresenceEvent, UpdateEvent } from "../../hub/protocol.ts";
+import type { PresenceEvent, UpdateEvent } from "@orswn/a2a-hub-protocol";
 import { HubHttpError, NO_ANSWER } from "../bus/hub/client.ts";
 import type { AgentInfo, BusService } from "../bus/index.ts";
 import type { SendInit, SendResult } from "../bus/tool.ts";
@@ -70,7 +70,7 @@ function row(id: string, fields: Partial<AgentInfo> = {}): AgentInfo {
 	return {
 		id,
 		name: "worker",
-		kind: "pi",
+		kind: "session",
 		host: "mars",
 		cwd: "/tmp",
 		role: "worker",

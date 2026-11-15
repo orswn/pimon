@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { PendingResult } from "../../hub/protocol.ts";
+import type { PendingResult } from "@orswn/a2a-hub-protocol";
 import { MAX_DIGEST_BYTES, MAX_DIGEST_ITEMS, renderDigest, renderOpenState } from "./digest.ts";
 import type { BusMessage } from "./protocol.ts";
 
