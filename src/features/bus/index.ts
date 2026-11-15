@@ -308,6 +308,8 @@ class BusRuntime implements ActionHost {
 	private sentState: string | undefined;
 	private stateTimer: ReturnType<typeof setTimeout> | undefined;
 	private agentsCache = new Map<boolean, { at: number; agents: Promise<AgentInfo[]> }>();
+	/** Mark-read requests in call order. It never rejects. */
+	private reads: Promise<void> = Promise.resolve();
 	spawnIdentity: SpawnIdentityProvider | undefined;
 	firstTaskHandler: ((message: BusMessage) => void) | undefined;
 	/** A spawned child waits for this first task before any digest wakes it. */
@@ -411,16 +413,24 @@ class BusRuntime implements ActionHost {
 		return agents;
 	}
 
-	async markRead(ids: string[]): Promise<void> {
-		if (ids.length === 0) return;
+	markRead(ids: string[]): Promise<void> {
+		if (ids.length === 0) return Promise.resolve();
 		const set = new Set(ids);
 		this.queue.messages = this.queue.messages.filter((message) => !set.has(message.id));
-		try {
-			await this.client?.read(ids);
-		} catch (error) {
-			this.debug(`read failed: ${(error as Error).message}`);
-		}
-		this.refreshCounts();
+		const client = this.client;
+		this.reads = this.reads.then(async () => {
+			try {
+				await client?.read(ids);
+			} catch (error) {
+				this.debug(`read failed: ${(error as Error).message}`);
+			}
+			this.refreshCounts();
+		});
+		return this.reads;
+	}
+
+	readsSettled(): Promise<void> {
+		return this.reads;
 	}
 
 	setTopics(topics: string[]): void {
@@ -991,6 +1001,7 @@ class BusRuntime implements ActionHost {
 	async openState(): Promise<string | undefined> {
 		const client = this.client;
 		if (!client) return undefined;
+		await this.reads;
 		try {
 			const [unread, pending, owed] = await Promise.all([
 				client.inbox({ unread: true, limit: 200 }),

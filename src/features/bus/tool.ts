@@ -143,6 +143,8 @@ export interface ActionHost {
 	agents(includeOffline: boolean): Promise<AgentInfo[]>;
 	/** Marks inbox messages read and drops them from the digest queue. */
 	markRead(ids: string[]): Promise<void>;
+	/** Resolves when every mark-read request sent so far has its hub answer or failed. */
+	readsSettled(): Promise<void>;
 	setTopics(topics: string[]): void;
 	/** Stores the one-line status text on the hub, or keeps it until the link is up. Empty text clears it. */
 	setStatus(text: string): Promise<{ text: string; sent: boolean }>;
@@ -608,6 +610,7 @@ export async function inboxAction(
 ): Promise<ActionResult> {
 	const limit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 10)));
 	const unreadOnly = options.unreadOnly !== false;
+	await host.readsSettled();
 	const shown = await hubCall(host, (hub) => hub.inbox({ unread: unreadOnly, limit }));
 	if (shown.length === 0)
 		return { text: unreadOnly ? "No unread bus messages." : "No bus messages.", details: { count: 0 } };
@@ -643,6 +646,7 @@ function formatItems(items: InboxItem[]): string {
 async function readAction(host: ActionHost, params: { messageId?: string; threadId?: string }): Promise<ActionResult> {
 	const { messageId, threadId } = params;
 	if (!messageId && !threadId) throw new Error('pi_bus action="read" requires messageId or threadId.');
+	await host.readsSettled();
 	const items = await hubCall(host, async (hub) => {
 		try {
 			if (messageId) return [await hub.message(messageId)];

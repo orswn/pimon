@@ -4,6 +4,12 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-15
+
+### Fixed
+
+- `pi_bus inbox` and `/bus-inbox` right after a digest answer no longer list the digested messages as unread.
+
 ## [2.1.0] - 2026-11-15
 
 ### Added

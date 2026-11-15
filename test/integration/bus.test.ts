@@ -156,6 +156,44 @@ describe("bus feature on a hub", () => {
 		expect(toolTexts(h).at(-1)).toBe("No unread bus messages.");
 	});
 
+	it("lists a digested message as read while the hub has not answered the mark-read yet", async () => {
+		const h = await start();
+		const sender = await peer("sender");
+		const readPath = `/link/${encodeURIComponent(busService().id)}/read`;
+		const inboxPath = `/link/${encodeURIComponent(busService().id)}/inbox?limit=10&unread=1`;
+		const realFetch = globalThis.fetch;
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let fallback: ReturnType<typeof setTimeout> | undefined;
+		// The read reaches the hub only after the hub answered the inbox list.
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url = input instanceof Request ? input.url : input.toString();
+			if (url.endsWith(readPath)) {
+				// Fallback for a client that waits for the read before it lists the inbox.
+				fallback ??= setTimeout(() => release(), 1_000);
+				await held;
+			}
+			const response = await realFetch(input, init);
+			if (url.endsWith(inboxPath)) release();
+			return response;
+		}) as typeof fetch;
+		try {
+			h.respond([
+				fauxAssistantMessage(fauxText("got it")),
+				call({ action: "inbox" }),
+				fauxAssistantMessage(fauxText("done")),
+			]);
+			await sender.send(busService().id, "hello there");
+			await h.waitForRequests(1);
+			await h.session.prompt("check inbox");
+			expect(toolTexts(h).at(-1)).toBe("No unread bus messages.");
+		} finally {
+			clearTimeout(fallback);
+			release();
+			globalThis.fetch = realFetch;
+		}
+	});
+
 	it("stores a wake=never message without starting a run", async () => {
 		const h = await start({ ui: {} });
 		const quiet = await peer("quiet");

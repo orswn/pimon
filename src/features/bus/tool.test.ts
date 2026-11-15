@@ -117,6 +117,7 @@ function host(
 		markRead: async (ids) => {
 			fake.read.push(...ids);
 		},
+		readsSettled: async () => {},
 		setTopics: () => {},
 		setStatus: async (text) => {
 			fake.status.push(text);
