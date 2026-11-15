@@ -19,7 +19,7 @@ import { formatRuntime, type ResolvedRuntime, resolveRuntime, THINKING_LEVELS } 
 import { pidGone, pidLive, sameProcess } from "./pid.ts";
 import { type AgentPaths, readPidFile, writeSpawnFile } from "./spawn-file.ts";
 
-const RESERVED_LABELS = new Set(["spawn", "depth", "parent", "owner", "role"]);
+const RESERVED_LABELS = new Set(["spawn", "depth", "parent", "owner", "role", "harness"]);
 const MAX_DEPTH = 2;
 const STARTING_MS = 45_000;
 /** A child without the bus cannot report back. codemode reaches MCP tools without listing each in a role. */

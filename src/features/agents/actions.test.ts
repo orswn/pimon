@@ -433,6 +433,10 @@ describe("spawn", () => {
 	it("refuses reserved and malformed labels with one parser", async () => {
 		const h = setup(root);
 		await expect(spawn(h, { labels: "parent=x" })).rejects.toThrow("cannot be overridden: parent");
+		await expect(spawn(h, { labels: "harness=codex" })).rejects.toThrow(
+			"These labels are set by the spawner and cannot be overridden: harness. They control identity, ownership, and the delegation depth cap.",
+		);
+		expect(h.placed).toEqual([]);
 		await expect(spawn(h, { labels: "oops" })).rejects.toThrow("Not understood: oops");
 	});
 
