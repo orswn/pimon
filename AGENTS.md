@@ -61,4 +61,5 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 
 - SemVer. `CHANGELOG.md` headings are `## [x.y.z] - YYYY-MM-DD`.
 - A release is one `chore(release): vX.Y.Z` commit and a `vX.Y.Z` tag.
+- A release pins an a2a-hub release: `scripts/a2a-hub.pin` names its tag and image digest, and the `@orswn/a2a-hub-protocol` dev dependency names the same tag. CI pulls the image only by digest.
 - Commit headers follow Conventional Commits. Bodies follow the Linux kernel style.
