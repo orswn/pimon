@@ -5,7 +5,7 @@ A pi package that holds one set of extensions as features of one extension.
 ## Install
 
 ```bash
-pi install git:git@github.com:orswn/pimon@v1.0.0
+pi install git:git@github.com:orswn/pimon@v2.1.0
 ```
 
 - The repo is private. The clone needs SSH access to `github.com:orswn/pimon`.
@@ -118,7 +118,7 @@ All features are on by default. The list is in load order.
 - Messages to an offline session wait in its hub mailbox. A send result says `delivered`, `queued`, `unconfirmed`, or `failed` per recipient.
 - Options:
   - `hub.url`: string, no default. The hub base URL, such as `https://hub.example`. Without it, the bus does no network work and `pi_bus` actions other than `whoami` return an error.
-  - `hub.tokenFile`: string, default `~/.config/a2a/host.token`, the host token file of a2a-hub clients. While that file is missing, the bus reads `<agentDir>/pimon-hub.token` if it exists. This fallback goes away in the next release. A relative path resolves against `<agentDir>`. The file holds the bearer token of a `host` principal. The file must be readable only by its owner, for example mode `0600`. The bus refuses any other file.
+  - `hub.tokenFile`: string, default `~/.config/a2a/host.token`, the host token file of a2a-hub clients. While that file is missing, the bus reads `<agentDir>/pimon-hub.token` if it exists. This fallback goes away in the next release. A relative path resolves against `<agentDir>`. The file holds the bearer token of a `host` principal. The file must be readable only by its owner, for example mode `0600`. The bus refuses any other file. To move an existing token: `install -D -m 600 ~/.pi/agent/pimon-hub.token ~/.config/a2a/host.token`.
   - `historyRetentionDays`: accepted and ignored. The hub owns retention.
 - Example: `{ "features": { "bus": { "hub": { "url": "https://hub.example" } } } }`.
 - Tools: `pi_bus`.
