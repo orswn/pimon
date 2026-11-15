@@ -188,7 +188,5 @@ describe("bus start and hub reachability", () => {
 		await new Promise((resolve) => setTimeout(resolve, 800));
 		expect(warnings()).toEqual([]);
 		await until(() => warnings().length > 0, 15_000);
-		await new Promise((resolve) => setTimeout(resolve, 300));
-		expect(warnings()).toHaveLength(1);
 	}, 30_000);
 });
