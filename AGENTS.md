@@ -10,6 +10,7 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - `npm test`: unit, integration, and process tests.
 - `npm run test:e2e`: real `pi --mode rpc` with a real model. Run by hand only.
 - `npx vp check --fix`: apply formatting.
+- `scripts/fetch-hub.sh`: puts the a2a-hub binary that `scripts/a2a-hub.pin` names at `.hub/a2a-hub`. Run it before the first `npm test` and after each pin change. Local mode builds it from source over SSH with `mise` and Go.
 
 ## Layout
 
@@ -54,6 +55,7 @@ One pi package. One extension entry point: `src/index.ts`. Each feature is a mod
 - Unit, integration, and process tests run in a sandbox (`test/support/sandbox.ts`): temp `HOME`, `XDG_RUNTIME_DIR`, `PI_CODING_AGENT_DIR`, recording stubs first in `PATH`, and no `PI_BUS_*`, `HERDR_*`, `PI_ASK_SECRET_SOCK`, `SUDO_ASKPASS`.
 - No test may reach the human: no real desktop or phone notification, terminal multiplexer, `sudo`, or live pi socket. Code that runs an external command takes an injectable exec. A new external command also goes into `STUBBED_COMMANDS`.
 - Run tests only through `npm test`, `npm run verify`, or `vp test run --project ...`. Never run the old standalone extension test files.
+- Tests that need a hub start an a2a-hub process: `HUB_BIN` if set, else `.hub/a2a-hub`. They reach it only over HTTP. The a2a-hub repository owns the hub tests.
 
 ## Releases
 

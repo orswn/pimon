@@ -8,6 +8,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 - The hub link API has a JSON Schema, `schema/hub-protocol-v2.json`, versioned by the hub protocol number. `npm run schema` writes it. Black-box contract tests check every link route, link event, and main error of a running hub against it. Set `HUB_BIN` to run them, and every other pimon test that needs a hub, against another hub binary.
 
+### Changed
+
+- Tests that need a hub run an a2a-hub binary: `HUB_BIN`, else `.hub/a2a-hub`. `scripts/fetch-hub.sh` puts the release that `scripts/a2a-hub.pin` names there: CI extracts it from the image by digest, a local run builds it from source. The hub tests moved to the a2a-hub repository.
+
 ## [2.0.1] - 2026-11-14
 
 ### Fixed

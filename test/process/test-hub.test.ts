@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { startTestHub, tempDir } from "../support/hub.ts";
+import { hubBinary } from "../support/hub-process.ts";
 
 const KEEP_RUNNING = `#!/usr/bin/env node
 import { createServer } from "node:http";
@@ -41,6 +42,18 @@ describe("test hub", () => {
 		expect(Date.now() - started).toBeLessThan(5_000);
 		await expect(fetch(`${hub.url}/healthz`)).rejects.toThrow();
 	}, 10_000);
+
+	it("runs HUB_BIN, else the fetched binary, and says how to fetch a missing one", () => {
+		const dir = tempDir("fetched-hub-");
+		dirs.push(dir);
+		const fetched = join(dir.dir, "a2a-hub");
+		expect(hubBinary({ HUB_BIN: "/opt/hub" }, fetched)).toBe("/opt/hub");
+		expect(() => hubBinary({}, fetched)).toThrow(
+			`no hub binary at ${fetched}: run scripts/fetch-hub.sh, or set HUB_BIN`,
+		);
+		writeFileSync(fetched, "");
+		expect(hubBinary({}, fetched)).toBe(fetched);
+	});
 
 	it("deletes its temp dir when the hub does not start", async () => {
 		fakeHub("exit.sh", EXIT_AT_ONCE);

@@ -29,7 +29,6 @@ import {
 export {
 	BUS_URI,
 	HOST_TOKEN,
-	HUB_MAIN,
 	type HubProcess,
 	LinkClient,
 	type LinkEventRecord,

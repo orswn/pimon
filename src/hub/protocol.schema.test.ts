@@ -34,8 +34,8 @@ describe("hub protocol schema", () => {
 		expect(CLIENT_BUS_URI).toBe(BUS_EXTENSION_URI);
 	});
 
-	it("keeps the contract suite free of value imports from src", () => {
-		for (const file of ["test/support/hub-process.ts", "test/contract/hub-contract.test.ts"]) {
+	it("keeps the hub process helper free of value imports from src", () => {
+		for (const file of ["test/support/hub-process.ts"]) {
 			const text = readFileSync(join(repo, file), "utf8");
 			const imports = [...text.matchAll(/^import\s+(type\s+)?[^;]*?from\s+"([^"]+)"/gm)];
 			expect(imports.length, file).toBeGreaterThan(0);
@@ -64,7 +64,7 @@ describe("hub protocol schema", () => {
 	});
 
 	it("keeps tests outside the hub free of value imports from src/hub, so they can run against HUB_BIN", () => {
-		const ownHubTests = /^(src\/hub\/|test\/process\/hub-start\.test\.ts$)/;
+		const ownHubTests = /^src\/hub\//;
 		const files = ["src", "test"]
 			.flatMap((root) =>
 				readdirSync(join(repo, root), { recursive: true, encoding: "utf8" }).map((file) => `${root}/${file}`),
@@ -73,7 +73,7 @@ describe("hub protocol schema", () => {
 			.filter((file) => !ownHubTests.test(file));
 		expect(files).toContain("test/support/hub.ts");
 		expect(files).toContain("test/integration/bus.test.ts");
-		expect(files).toContain("test/process/hub-link.test.ts");
+		expect(files).toContain("test/process/bus-hub-client.test.ts");
 		const found = files.flatMap((file) =>
 			hubValueImports(file, readFileSync(join(repo, file), "utf8")).map((source) => `${file}: ${source}`),
 		);

@@ -1,14 +1,14 @@
-// Hub process and raw link helpers for black-box tests. Only `import type` from `src`,
-// so a suite that uses this module can run against another hub binary through `HUB_BIN`.
+// Hub process and raw link helpers for black-box tests of an a2a-hub binary.
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 /** The protocol of the hub under test. A unit test pins it to `HUB_PROTOCOL`. */
 export const PROTOCOL = 2;
-export const HUB_MAIN = resolve(import.meta.dirname, "../../src/hub/main.ts");
+/** Where `scripts/fetch-hub.sh` puts the pinned hub. */
+export const FETCHED_HUB = resolve(import.meta.dirname, "../../.hub/a2a-hub");
 export const BUS_URI = "https://github.com/orswn/pimon/a2a/bus/v1";
 export const HOST_TOKEN = "mars-token";
 export const OTHER_HOST_TOKEN = "venus-token";
@@ -43,10 +43,15 @@ export interface HubProcess {
 	stop(signal?: NodeJS.Signals): Promise<number | null>;
 }
 
-/**
- * Env `HUB_BIN` runs that hub binary with the same flags instead of `src/hub/main.ts`.
- * `HUB_BIN` must exec the hub in place and not fork, because `stop` signals only the direct child.
- */
+/** The hub binary under test: env `HUB_BIN`, else the binary that `scripts/fetch-hub.sh` fetched. */
+export function hubBinary(env: NodeJS.ProcessEnv = process.env, fetched = FETCHED_HUB): string {
+	const bin = env["HUB_BIN"];
+	if (bin) return bin;
+	if (!existsSync(fetched)) throw new Error(`no hub binary at ${fetched}: run scripts/fetch-hub.sh, or set HUB_BIN`);
+	return fetched;
+}
+
+/** `HUB_BIN` must exec the hub in place and not fork, because `stop` signals only the direct child. */
 export async function startHubProcess(options: {
 	dataDir: string;
 	/** Defaults to a free port. */
@@ -60,11 +65,10 @@ export async function startHubProcess(options: {
 	if (options.tokensFile) args.push("--tokens", options.tokensFile);
 	if (options.externalFile) args.push("--external", options.externalFile);
 	if (options.testAgents) args.push("--test-agents");
-	const { HUB_BIN: bin, ...env } = process.env;
-	const [command, argv] = bin ? [bin, args] : [process.execPath, ["--no-warnings", HUB_MAIN, ...args]];
-	const child = spawn(command, argv, {
+	const command = hubBinary();
+	const child = spawn(command, args, {
 		stdio: ["ignore", "pipe", "pipe"],
-		env: { ...env, ...options.env },
+		env: { ...process.env, ...options.env },
 	});
 	let stderr = "";
 	child.stderr?.on("data", (chunk: Buffer) => {
