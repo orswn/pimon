@@ -3,6 +3,6 @@
 # A2A_HUB_DIGEST: the digest of ghcr.io/orswn/a2a-hub:<A2A_HUB_REF>, as sha256:<hex>. Only a release has one.
 # A2A_HUB_GO: the Go version that builds the hub from source.
 # FIXME(okka): pin the a2a-hub v1.1.0 tag and its image digest when that release exists.
-A2A_HUB_REF=f657f2288ffbdee42db824e3c8be8331b69e0dcc
+A2A_HUB_REF=a68c16e733f24b00d0a6b1beecd6b9ecc813f0e6
 A2A_HUB_DIGEST=
 A2A_HUB_GO=1.26.11

@@ -45,7 +45,7 @@
 		"@earendil-works/pi-ai": "1.5.0",
 		"@earendil-works/pi-coding-agent": "1.5.0",
 		"@earendil-works/pi-tui": "1.5.0",
-		"@orswn/a2a-hub-protocol": "git+ssh://git@github.com/orswn/a2a-hub.git#f657f2288ffbdee42db824e3c8be8331b69e0dcc",
+		"@orswn/a2a-hub-protocol": "git+ssh://git@github.com/orswn/a2a-hub.git#a68c16e733f24b00d0a6b1beecd6b9ecc813f0e6",
 		"@types/node": "24.19.2",
 		"typebox": "1.3.27",
 		"typescript": "7.0.2",

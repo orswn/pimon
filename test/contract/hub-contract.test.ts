@@ -408,7 +408,7 @@ describe("hub link contract", () => {
 		await fails(404, "POST", `/link/${beta}/tasks/no-such-task`, { body: { state: "completed" } });
 		await fails(409, "POST", `/link/${alpha}/control`, { body: { target: idle, action: "close" } });
 		expect(await fails(426, "POST", "/link/register", { body: { agent: alpha, protocol: 1 } })).toEqual({
-			error: `hub protocol ${PROTOCOL} required`,
+			error: `hub protocol 2 or ${PROTOCOL} required`,
 			expected: PROTOCOL,
 			supported: [2, PROTOCOL],
 		});
