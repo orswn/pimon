@@ -13,7 +13,6 @@ import {
 } from "@a2a-js/sdk/client";
 import { HubClient, type SendOutcome } from "../../src/features/bus/hub/client.ts";
 import { HubLink, type Registration } from "../../src/features/bus/hub/link.ts";
-import type { ExternalAgentConfig } from "../../src/hub/external.ts";
 import type { AgentInfo, AgentsResult, BusMetadata, LinkEvent, LinkEventType } from "@orswn/a2a-hub-protocol";
 import {
 	AGENT_HEADER,
@@ -153,8 +152,19 @@ export interface TestHub {
 	close(): Promise<void>;
 }
 
-/** External agent entry as the hub external file gives it. The hub defaults the fields that it leaves out. */
-export type ExternalAgent = Omit<ExternalAgentConfig, "cardTtlMs">;
+/** External agent entry as the hub external file gives it, with its key as `id`. */
+export interface ExternalAgent {
+	id: string;
+	name: string;
+	url: string;
+	token: string;
+	description: string;
+	pollMs: number;
+	replyTimeoutMs: number;
+	idleMs: number;
+	retryMs: number;
+	offlineMs: number;
+}
 
 function writeTokenFile(file: string, withHost = true): void {
 	const hex = (token: string) => createHash("sha256").update(token).digest("hex");

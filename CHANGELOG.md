@@ -6,7 +6,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 
 ### Added
 
-- The hub link API has a JSON Schema, `schema/hub-protocol-v2.json`, versioned by the hub protocol number. `npm run schema` writes it. Black-box contract tests check every link route, link event, and main error of a running hub against it. Set `HUB_BIN` to run them, and every other pimon test that needs a hub, against another hub binary.
+- Black-box contract tests check every link route, link event, and main error of the hub under test against the protocol 3 JSON Schema of the a2a-hub protocol package.
 
 ### Changed
 
@@ -14,6 +14,10 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 - `pi_bus peers` no longer shows a kind for a session. It shows `harness=<name>` for a session of another harness, such as `harness=claude-code`. External and built-in agents keep `kind=external` and `kind=builtin`.
 - The wire types come from the a2a-hub protocol package, a dev dependency. pimon loads no code from it at run time.
 - Tests that need a hub run an a2a-hub binary: `HUB_BIN`, else `.hub/a2a-hub`. `scripts/fetch-hub.sh` puts the release that `scripts/a2a-hub.pin` names there: CI extracts it from the image by digest, a local run builds it from source. The hub tests moved to the a2a-hub repository.
+
+### Removed
+
+- The hub: `src/hub/`, its `Containerfile`, the image `ghcr.io/orswn/pimon-hub`, the A2A conformance job, `npm run schema`, and `schema/`. The hub is a2a-hub in the repository `github.com/orswn/a2a-hub`. That repository owns the hub tests, the link protocol schema, and the hub image `ghcr.io/orswn/a2a-hub`.
 
 ## [2.0.1] - 2026-11-14
 
