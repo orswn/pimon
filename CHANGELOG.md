@@ -11,6 +11,7 @@ All notable changes to pimon are listed here. Versions follow SemVer.
 ### Changed
 
 - The `bus` feature speaks hub link protocol 3 and needs a2a-hub 1.1.0 or later. It registers with the label `harness=pi`, sends the agent header `X-A2A-Agent`, and uses the bus extension URI `https://github.com/orswn/a2a-hub/bus/v1`. A hub that speaks only protocol 2 answers 426. The bus then stops and says which protocol each side speaks.
+- The default `hub.tokenFile` is `~/.config/a2a/host.token`, the host token file of a2a-hub clients. While that file is missing, the bus reads `<agentDir>/pimon-hub.token` if it exists. This fallback goes away in the next release. Copy the token to the new file, mode `0600`.
 - `pi_bus peers` no longer shows a kind for a session. It shows `harness=<name>` for a session of another harness, such as `harness=claude-code`. External and built-in agents keep `kind=external` and `kind=builtin`.
 - The wire types come from the a2a-hub protocol package, a dev dependency. pimon loads no code from it at run time.
 - Tests that need a hub run an a2a-hub binary: `HUB_BIN`, else `.hub/a2a-hub`. `scripts/fetch-hub.sh` puts the release that `scripts/a2a-hub.pin` names there: CI extracts it from the image by digest, a local run builds it from source. The hub tests moved to the a2a-hub repository.

@@ -118,7 +118,7 @@ All features are on by default. The list is in load order.
 - Messages to an offline session wait in its hub mailbox. A send result says `delivered`, `queued`, `unconfirmed`, or `failed` per recipient.
 - Options:
   - `hub.url`: string, no default. The hub base URL, such as `https://hub.example`. Without it, the bus does no network work and `pi_bus` actions other than `whoami` return an error.
-  - `hub.tokenFile`: string, default `<agentDir>/pimon-hub.token`. The file holds the bearer token of a `host` principal. The file must be readable only by its owner, for example mode `0600`. The bus refuses any other file.
+  - `hub.tokenFile`: string, default `~/.config/a2a/host.token`, the host token file of a2a-hub clients. While that file is missing, the bus reads `<agentDir>/pimon-hub.token` if it exists. This fallback goes away in the next release. A relative path resolves against `<agentDir>`. The file holds the bearer token of a `host` principal. The file must be readable only by its owner, for example mode `0600`. The bus refuses any other file.
   - `historyRetentionDays`: accepted and ignored. The hub owns retention.
 - Example: `{ "features": { "bus": { "hub": { "url": "https://hub.example" } } } }`.
 - Tools: `pi_bus`.
@@ -237,7 +237,8 @@ Background jobs also do not inherit the other `PI_BUS_*` names.
 
 pimon reads or writes these paths:
 
-- `<agentDir>/pimon-hub.token`: read only. The hub token of the `bus` feature. Set another path with `hub.tokenFile`.
+- `~/.config/a2a/host.token`: read only. The hub token of the `bus` feature. Set another path with `hub.tokenFile`.
+- `<agentDir>/pimon-hub.token`: read only, and only while `~/.config/a2a/host.token` is missing. The old default of `hub.tokenFile`.
 - `<agentDir>/background/leases/`: crash-recovery leases. With `PI_BACKGROUND_DIR`: `$PI_BACKGROUND_DIR/leases/`.
 - `$TMPDIR/pi-background-logs/`: job logs without a `logFile`.
 - `$TMPDIR/pi-agents-<uid>/`: child records, spawn files, child pid files, close hooks, and session roles.

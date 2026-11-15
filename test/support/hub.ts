@@ -253,6 +253,9 @@ export async function startTestHub(
 	};
 }
 
+/** The token file of a test session, relative to its agent dir, so no test reads the token file in `HOME`. */
+export const TEST_TOKEN_FILE = "host.token";
+
 /** Points the bus feature of `agentDir` at `url`: `pimon.json` plus a 0600 token file. Keeps other config. */
 export function writeHubConfig(
 	agentDir: string,
@@ -268,9 +271,9 @@ export function writeHubConfig(
 	}
 	const features = { ...config.features, ...options.features };
 	const bus = (features["bus"] ?? {}) as Record<string, unknown>;
-	features["bus"] = { ...bus, hub: { url } };
+	features["bus"] = { ...bus, hub: { url, tokenFile: TEST_TOKEN_FILE } };
 	writeFileSync(configPath, JSON.stringify({ ...config, features }));
-	writeFileSync(join(agentDir, "pimon-hub.token"), `${options.token ?? HOST_TOKEN}\n`, { mode: 0o600 });
+	writeFileSync(join(agentDir, TEST_TOKEN_FILE), `${options.token ?? HOST_TOKEN}\n`, { mode: 0o600 });
 }
 
 /** Another pi session on the hub, driven by the client modules of the bus feature. */

@@ -18,7 +18,7 @@ import { scheduleForcedClose } from "./control.ts";
 import { type QueuedDigest, renderDigest, renderOpenState, truncate } from "./digest.ts";
 import { HUB_PROTOCOL, HubClient, HubHttpError } from "./hub/client.ts";
 import { HubLink, type LinkStatus, type Registration } from "./hub/link.ts";
-import { readHubToken } from "./hub/token.ts";
+import { defaultHubTokenFile, readHubToken } from "./hub/token.ts";
 import {
 	busLabels,
 	controlPolicyOf,
@@ -336,7 +336,7 @@ class BusRuntime implements ActionHost {
 		const configured = this.ctx.config.hub?.tokenFile;
 		return configured
 			? resolve(this.ctx.agentDir, expandHome(configured))
-			: resolve(this.ctx.agentDir, "pimon-hub.token");
+			: defaultHubTokenFile(homedir(), resolve(this.ctx.agentDir));
 	}
 
 	get started(): boolean {

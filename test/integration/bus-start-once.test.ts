@@ -1,5 +1,5 @@
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
-import { chmodSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { clearReloadState } from "../../src/core/reload-state.ts";
 import { bus } from "../../src/features/bus/index.ts";
 import { busCapture, until } from "../support/bus.ts";
 import { createHarness, type Harness } from "../support/harness.ts";
-import { startTestHub, type TestHub, writeHubConfig } from "../support/hub.ts";
+import { HOST_TOKEN, startTestHub, TEST_TOKEN_FILE, tempDir, type TestHub, writeHubConfig } from "../support/hub.ts";
 
 const capture = busCapture();
 
@@ -36,7 +36,7 @@ describe("bus start and hub reachability", () => {
 			ui: {},
 			setupAgentDir: (agentDir) => {
 				writeHubConfig(agentDir, url);
-				chmodSync(join(agentDir, "pimon-hub.token"), 0o644);
+				chmodSync(join(agentDir, TEST_TOKEN_FILE), 0o644);
 			},
 		});
 		const h = harness;
@@ -49,7 +49,7 @@ describe("bus start and hub reachability", () => {
 		expect(failures()).toBe(1);
 		expect(await hub.agents(true)).toEqual([]);
 
-		chmodSync(join(h.agentDir, "pimon-hub.token"), 0o600);
+		chmodSync(join(h.agentDir, TEST_TOKEN_FILE), 0o600);
 		await h.session.extensionRunner.emit({ type: "session_start", reason: "new" });
 		await until(() => capture.get().online);
 		expect(failures()).toBe(1);
@@ -86,6 +86,32 @@ describe("bus start and hub reachability", () => {
 			harness = undefined;
 			old.closeAllConnections();
 			await new Promise<void>((done) => old.close(() => done()));
+		}
+	});
+
+	it("reads the host token file of a2a-hub clients when hub.tokenFile is not set", async () => {
+		hub = await startTestHub();
+		const url = hub.url;
+		const home = tempDir("pimon-home-");
+		const savedHome = process.env["HOME"];
+		process.env["HOME"] = home.dir;
+		try {
+			mkdirSync(join(home.dir, ".config", "a2a"), { recursive: true });
+			writeFileSync(join(home.dir, ".config", "a2a", "host.token"), `${HOST_TOKEN}\n`, { mode: 0o600 });
+			harness = await createHarness({
+				features: [bus, capture.feature],
+				setupAgentDir: (agentDir) =>
+					writeFileSync(join(agentDir, "pimon.json"), JSON.stringify({ features: { bus: { hub: { url } } } })),
+			});
+			await until(() => capture.get().online);
+			expect(capture.get().unavailable()).toBeUndefined();
+		} finally {
+			await harness?.shutdown();
+			harness?.dispose();
+			harness = undefined;
+			if (savedHome === undefined) delete process.env["HOME"];
+			else process.env["HOME"] = savedHome;
+			home.dispose();
 		}
 	});
 

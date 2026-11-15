@@ -17,7 +17,7 @@ import {
 } from "./client.ts";
 import { HubLink, type LinkStatus } from "./link.ts";
 import { SseParser } from "./sse.ts";
-import { readHubToken } from "./token.ts";
+import { defaultHubTokenFile, readHubToken } from "./token.ts";
 
 const AGENT = "019a7c3e-5d10-7000-8000-000000000001";
 
@@ -147,6 +147,27 @@ describe("hub protocol pin", () => {
 		expect(HUB_PROTOCOL).toBe(3);
 		expect(document["$id"]).toBe("urn:a2a-hub:protocol:3");
 		expect(document["x-bus-extension-uri"]).toBe(BUS_EXTENSION_URI);
+	});
+});
+
+describe("defaultHubTokenFile", () => {
+	const home = "/home/u";
+	const agentDir = "/home/u/.pi/agent";
+	const shared = "/home/u/.config/a2a/host.token";
+	const legacy = "/home/u/.pi/agent/pimon-hub.token";
+	const only =
+		(...files: string[]) =>
+		(path: string) =>
+			files.includes(path);
+
+	it("takes the host token file of a2a-hub clients", () => {
+		expect(defaultHubTokenFile(home, agentDir, only(shared, legacy))).toBe(shared);
+		expect(defaultHubTokenFile(home, agentDir, only(shared))).toBe(shared);
+	});
+
+	it("falls back to the pimon-hub.token of the agent dir only while the shared file is missing", () => {
+		expect(defaultHubTokenFile(home, agentDir, only(legacy))).toBe(legacy);
+		expect(defaultHubTokenFile(home, agentDir, only())).toBe(shared);
 	});
 });
 

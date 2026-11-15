@@ -1,6 +1,19 @@
-import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export type TokenResult = { token: string } | { error: string; reason: "missing" | "mode" | "empty" | "unreadable" };
+
+/** The host token file of a2a-hub clients. */
+export function defaultHubTokenFile(
+	home: string,
+	agentDir: string,
+	exists: (path: string) => boolean = existsSync,
+): string {
+	const shared = join(home, ".config", "a2a", "host.token");
+	// FIXME(okka): drop the fallback to <agentDir>/pimon-hub.token in the release after the first one that reads the shared file.
+	const legacy = join(agentDir, "pimon-hub.token");
+	return !exists(shared) && exists(legacy) ? legacy : shared;
+}
 
 /** The token is a bearer secret, so a file that other users can read is refused, like a private spawn file. */
 export function readHubToken(path: string): TokenResult {
